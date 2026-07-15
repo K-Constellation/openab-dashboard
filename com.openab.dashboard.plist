@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openab.dashboard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/openab-dashboard/target/release/openab-dashboard</string>
+        <string>--config</string>
+        <string>/path/to/openab-dashboard/config.yaml</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/path/to/openab-dashboard</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/path/to/openab-dashboard/dashboard.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/openab-dashboard/dashboard.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RUST_LOG</key>
+        <string>openab_dashboard=info</string>
+    </dict>
+</dict>
+</plist>

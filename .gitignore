@@ -1,0 +1,19 @@
+# Build artifacts
+/target
+
+# Database (contains usage data)
+*.db
+*.db-journal
+*.db-wal
+
+# Environment / secrets
+.env
+config.yaml
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp

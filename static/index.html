@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="cyberpunk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenAB Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        /* ===== Theme: Cyberpunk Neon (Default) ===== */
+        [data-theme="cyberpunk"] {
+            --bg-primary: #0a0e1a;
+            --bg-card: #111827;
+            --bg-card-hover: #1a2035;
+            --border: #1e293b;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --accent-1: #22d3ee;
+            --accent-2: #f472b6;
+            --accent-3: #fb923c;
+            --accent-4: #4ade80;
+            --accent-5: #a78bfa;
+            --chart-grid: #1e293b;
+            --shadow: 0 0 20px rgba(34, 211, 238, 0.1);
+            --font-display: 'JetBrains Mono', monospace;
+            --font-body: 'Inter', sans-serif;
+            --radius: 12px;
+            --glass-blur: none;
+            --bg-gradient: none;
+            --scanline: none;
+            --select-bg: #111827;
+            --select-border: #1e293b;
+            --select-text: #e2e8f0;
+            --progress-bg: #1e293b;
+        }
+
+        /* ===== Theme: Minimal Light ===== */
+        [data-theme="minimal"] {
+            --bg-primary: #ffffff;
+            --bg-card: #fafafa;
+            --bg-card-hover: #f5f5f5;
+            --border: #e5e7eb;
+            --text-primary: #111827;
+            --text-secondary: #6b7280;
+            --accent-1: #6366f1;
+            --accent-2: #8b5cf6;
+            --accent-3: #ec4899;
+            --accent-4: #10b981;
+            --accent-5: #f59e0b;
+            --chart-grid: #f3f4f6;
+            --shadow: none;
+            --font-display: 'Inter', sans-serif;
+            --font-body: 'Inter', sans-serif;
+            --radius: 8px;
+            --glass-blur: none;
+            --bg-gradient: none;
+            --scanline: none;
+            --select-bg: #ffffff;
+            --select-border: #e5e7eb;
+            --select-text: #111827;
+            --progress-bg: #e5e7eb;
+        }
+
+        /* ===== Theme: Glassmorphism ===== */
+        [data-theme="glassmorphism"] {
+            --bg-primary: #1a1a2e;
+            --bg-card: rgba(255, 255, 255, 0.05);
+            --bg-card-hover: rgba(255, 255, 255, 0.08);
+            --border: rgba(255, 255, 255, 0.1);
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --accent-1: #67e8f9;
+            --accent-2: #c4b5fd;
+            --accent-3: #fda4af;
+            --accent-4: #86efac;
+            --accent-5: #fde68a;
+            --chart-grid: rgba(255, 255, 255, 0.05);
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            --font-display: 'Inter', sans-serif;
+            --font-body: 'Inter', sans-serif;
+            --radius: 16px;
+            --glass-blur: blur(16px);
+            --bg-gradient: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            --scanline: none;
+            --select-bg: rgba(255, 255, 255, 0.05);
+            --select-border: rgba(255, 255, 255, 0.1);
+            --select-text: #f8fafc;
+            --progress-bg: rgba(255, 255, 255, 0.1);
+        }
+
+        /* ===== Theme: Terminal Green ===== */
+        [data-theme="terminal"] {
+            --bg-primary: #000000;
+            --bg-card: #0a0a0a;
+            --bg-card-hover: #111111;
+            --border: #00ff41;
+            --text-primary: #00ff41;
+            --text-secondary: #00cc33;
+            --accent-1: #00ff41;
+            --accent-2: #ffff00;
+            --accent-3: #ff4444;
+            --accent-4: #44ffff;
+            --accent-5: #ff44ff;
+            --chart-grid: #0a2a0a;
+            --shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+            --font-display: 'JetBrains Mono', monospace;
+            --font-body: 'JetBrains Mono', monospace;
+            --radius: 0px;
+            --glass-blur: none;
+            --bg-gradient: none;
+            --scanline: repeating-linear-gradient(0deg, rgba(0,255,65,0.03) 0px, rgba(0,255,65,0.03) 1px, transparent 1px, transparent 2px);
+            --select-bg: #0a0a0a;
+            --select-border: #00ff41;
+            --select-text: #00ff41;
+            --progress-bg: #0a2a0a;
+        }
+
+        /* ===== Theme: Deep Ocean ===== */
+        [data-theme="ocean"] {
+            --bg-primary: #0d1117;
+            --bg-card: #161b22;
+            --bg-card-hover: #1c2128;
+            --border: #30363d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent-1: #10b981;
+            --accent-2: #f59e0b;
+            --accent-3: #3b82f6;
+            --accent-4: #ef4444;
+            --accent-5: #8b5cf6;
+            --chart-grid: #21262d;
+            --shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            --font-display: 'Inter', sans-serif;
+            --font-body: 'Inter', sans-serif;
+            --radius: 8px;
+            --glass-blur: none;
+            --bg-gradient: none;
+            --scanline: none;
+            --select-bg: #161b22;
+            --select-border: #30363d;
+            --select-text: #c9d1d9;
+            --progress-bg: #21262d;
+        }
+
+        /* ===== Base Styles ===== */
+        * {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        body {
+            background: var(--bg-gradient, var(--bg-primary));
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-body);
+            min-height: 100vh;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--scanline);
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            backdrop-filter: var(--glass-blur);
+            -webkit-backdrop-filter: var(--glass-blur);
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+        }
+
+        .card:hover {
+            background: var(--bg-card-hover);
+        }
+
+        .stat-value {
+            font-family: var(--font-display);
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--accent-1);
+            line-height: 1.2;
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
+
+        .stat-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .theme-select {
+            background: var(--select-bg);
+            border: 1px solid var(--select-border);
+            color: var(--select-text);
+            border-radius: var(--radius);
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+            font-family: var(--font-body);
+            cursor: pointer;
+            outline: none;
+        }
+
+        .theme-select:focus {
+            border-color: var(--accent-1);
+            box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.2);
+        }
+
+        .theme-select option {
+            background: var(--bg-card);
+            color: var(--text-primary);
+        }
+
+        .progress-bar-container {
+            background: var(--progress-bg);
+            border-radius: 4px;
+            height: 8px;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.6s ease;
+        }
+
+        .leaderboard-item {
+            padding: 1rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .leaderboard-item:last-child {
+            border-bottom: none;
+        }
+
+        .rank-badge {
+            font-size: 1.25rem;
+            width: 2rem;
+            text-align: center;
+        }
+
+        .agent-name {
+            font-family: var(--font-display);
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .agent-provider {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+
+        .metric-value {
+            font-family: var(--font-display);
+            font-weight: 500;
+            color: var(--accent-1);
+        }
+
+        .metric-detail {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+
+        .header-title {
+            font-family: var(--font-display);
+            color: var(--text-primary);
+        }
+
+        .health-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse-dot 2s infinite;
+        }
+
+        .health-dot.healthy {
+            background: var(--accent-4);
+            box-shadow: 0 0 6px var(--accent-4);
+        }
+
+        .health-dot.unhealthy {
+            background: #ef4444;
+            box-shadow: 0 0 6px #ef4444;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 300px;
+        }
+
+        @media (max-width: 768px) {
+            .chart-container {
+                height: 220px;
+            }
+        }
+
+        /* Skeleton loading animation */
+        .skeleton {
+            background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-card-hover) 50%, var(--bg-card) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 4px;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-6 lg:p-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
+            <div class="flex items-center gap-3">
+                <h1 class="header-title text-xl md:text-2xl font-bold">
+                    ⚡ OpenAB Dashboard
+                </h1>
+                <span id="health-indicator" class="flex items-center gap-1.5 text-xs" style="color: var(--text-secondary)">
+                    <span class="health-dot"></span>
+                    <span id="health-text">connecting...</span>
+                </span>
+            </div>
+            <div class="flex items-center gap-3">
+                <select id="days-selector" class="theme-select text-xs" onchange="loadChart()">
+                    <option value="7">7 days</option>
+                    <option value="14" selected>14 days</option>
+                    <option value="30">30 days</option>
+                </select>
+                <select id="theme-selector" class="theme-select" onchange="setTheme(this.value)">
+                    <option value="cyberpunk">🌃 Cyberpunk Neon</option>
+                    <option value="minimal">⬜ Minimal Light</option>
+                    <option value="glassmorphism">🫧 Glassmorphism</option>
+                    <option value="terminal">💻 Terminal Green</option>
+                    <option value="ocean">🌊 Deep Ocean</option>
+                </select>
+                <span id="last-refresh" class="text-xs hidden sm:inline" style="color: var(--text-secondary)"></span>
+            </div>
+        </header>
+
+        <!-- Stat Cards -->
+        <section id="stat-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="card">
+                <div class="stat-icon">📊</div>
+                <div class="stat-value" id="stat-total-tokens">—</div>
+                <div class="stat-label">Total Tokens (14d)</div>
+            </div>
+            <div class="card">
+                <div class="stat-icon">⚡</div>
+                <div class="stat-value" id="stat-today-usage">—</div>
+                <div class="stat-label">Today's Tokens</div>
+            </div>
+            <div class="card">
+                <div class="stat-icon">🏆</div>
+                <div class="stat-value" id="stat-top-agent">—</div>
+                <div class="stat-label">Top Agent</div>
+            </div>
+            <div class="card">
+                <div class="stat-icon">🔧</div>
+                <div class="stat-value" id="stat-total-requests">—</div>
+                <div class="stat-label">Total Requests (14d)</div>
+            </div>
+        </section>
+
+        <!-- Daily Usage Chart -->
+        <section class="card mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold" style="font-family: var(--font-display)">📊 Daily Usage</h2>
+                <span class="text-xs" style="color: var(--text-secondary)" id="chart-period"></span>
+            </div>
+            <div class="chart-container">
+                <canvas id="dailyChart"></canvas>
+            </div>
+        </section>
+
+        <!-- Response Time Chart -->
+        <section class="card mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold" style="font-family: var(--font-display)">⚡ Avg Response Time</h2>
+                <span class="text-xs" style="color: var(--text-secondary)">seconds per request</span>
+            </div>
+            <div class="chart-container" style="height: 200px">
+                <canvas id="responseTimeChart"></canvas>
+            </div>
+        </section>
+
+        <!-- Pod Status -->
+        <section class="card mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold" style="font-family: var(--font-display)">🖥️ Pod Status</h2>
+                <span class="text-xs" style="color: var(--text-secondary)" id="pod-last-collection"></span>
+            </div>
+            <div id="pod-status-content" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div class="py-4 text-center" style="color: var(--text-secondary)">Loading pods...</div>
+            </div>
+        </section>
+
+        <!-- Leaderboard -->
+        <section class="card">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold" style="font-family: var(--font-display)">🏆 Agent Leaderboard</h2>
+                <select id="leaderboard-period" class="theme-select text-xs" onchange="loadLeaderboard()">
+                    <option value="today">Today</option>
+                    <option value="week">This Week</option>
+                    <option value="month" selected>This Month</option>
+                </select>
+            </div>
+            <div id="leaderboard-content">
+                <div class="py-4 text-center" style="color: var(--text-secondary)">Loading leaderboard...</div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="mt-8 text-center text-xs" style="color: var(--text-secondary)">
+            OpenAB Dashboard • Auto-refreshes every 60s
+        </footer>
+    </div>
+
+    <script>
+        // Global error handler - shows errors visually
+        window.onerror = function(msg, url, line) {
+            document.body.insertAdjacentHTML('afterbegin',
+                '<div style="background:#dc2626;color:white;padding:8px 16px;font-size:12px;font-family:monospace;position:fixed;bottom:0;left:0;right:0;z-index:9999">Error: ' + msg + ' (line ' + line + ')</div>');
+        };
+        window.addEventListener('unhandledrejection', function(e) {
+            document.body.insertAdjacentHTML('afterbegin',
+                '<div style="background:#dc2626;color:white;padding:8px 16px;font-size:12px;font-family:monospace;position:fixed;bottom:0;left:0;right:0;z-index:9999">Promise rejected: ' + e.reason + '</div>');
+        });
+        function setTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('openab-theme', theme);
+            // Re-render chart with new theme colors (only if chart exists)
+            if (typeof updateChartColors === 'function' && window.dailyChart) {
+                updateChartColors();
+            }
+        }
+
+        function getThemeColors() {
+            const style = getComputedStyle(document.documentElement);
+            return [
+                style.getPropertyValue('--accent-1').trim(),
+                style.getPropertyValue('--accent-2').trim(),
+                style.getPropertyValue('--accent-3').trim(),
+                style.getPropertyValue('--accent-4').trim(),
+                style.getPropertyValue('--accent-5').trim(),
+            ];
+        }
+
+        function getThemeColor(varName) {
+            return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        }
+
+        // Initialize theme
+        const savedTheme = localStorage.getItem('openab-theme') || 'cyberpunk';
+        setTheme(savedTheme);
+        document.getElementById('theme-selector').value = savedTheme;
+
+        // ===== Chart.js Setup =====
+        var dailyChart = null;
+        var chartData = null;
+
+        async function loadChart() {
+            const days = document.getElementById('days-selector').value;
+            try {
+                const res = await fetch(`/api/summary?days=${days}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                chartData = await res.json();
+                renderChart(chartData);
+            } catch (err) {
+                console.error('Failed to load chart data:', err);
+                document.getElementById('chart-period').textContent = 'Failed to load data';
+            }
+        }
+
+        function renderChart(data) {
+            const ctx = document.getElementById('dailyChart').getContext('2d');
+            const colors = getThemeColors();
+            const gridColor = getThemeColor('--chart-grid');
+            const textColor = getThemeColor('--text-secondary');
+
+            // Collect all unique agents
+            const agentSet = new Set();
+            data.daily.forEach(day => {
+                day.agents.forEach(a => agentSet.add(a.agent));
+            });
+            const agents = [...agentSet];
+
+            // Build labels (dates)
+            const labels = data.daily.map(d => {
+                const date = new Date(d.date + 'T00:00:00');
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            });
+
+            // Build datasets
+            const datasets = agents.map((agent, idx) => ({
+                label: agent,
+                data: data.daily.map(day => {
+                    const found = day.agents.find(a => a.agent === agent);
+                    return found ? (found.tokens / 1000) : 0;
+                }),
+                backgroundColor: colors[idx % colors.length],
+                borderRadius: 4,
+                borderSkipped: false,
+            }));
+
+            // Update period display
+            if (data.period) {
+                document.getElementById('chart-period').textContent =
+                    `${data.period.start} → ${data.period.end}`;
+            }
+
+            // Destroy existing chart
+            if (dailyChart) {
+                dailyChart.destroy();
+            }
+
+            dailyChart = new Chart(ctx, {
+                type: 'bar',
+                data: { labels, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index',
+                    },
+                    scales: {
+                        x: {
+                            stacked: true,
+                            grid: { color: gridColor },
+                            ticks: { color: textColor, font: { size: 11 } },
+                        },
+                        y: {
+                            stacked: true,
+                            grid: { color: gridColor },
+                            ticks: { color: textColor, font: { size: 11 } },
+                            title: {
+                                display: true,
+                                text: 'Tokens (K)',
+                                color: textColor,
+                                font: { size: 12 }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                color: textColor,
+                                usePointStyle: true,
+                                pointStyle: 'rectRounded',
+                                padding: 16,
+                                font: { size: 12 }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0,0,0,0.8)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            borderColor: 'rgba(255,255,255,0.1)',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            padding: 12,
+                            callbacks: {
+                                label: function(context) {
+                                    const tokens = context.raw * 1000;
+                                    return context.dataset.label + ': ' + formatTokens(tokens) + ' tokens';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            window.dailyChart = dailyChart;
+        }
+
+        // (updateChartColors defined in theme section above)
+
+        // ===== Stat Cards =====
+        async function loadStats() {
+            try {
+                const [leaderboardRes, summaryRes, summary14Res] = await Promise.all([
+                    fetch('/api/leaderboard?period=month'),
+                    fetch('/api/summary?days=1'),
+                    fetch('/api/summary?days=14'),
+                ]);
+
+                if (leaderboardRes.ok) {
+                    const lb = await leaderboardRes.json();
+                    renderTopAgent(lb);
+                }
+
+                if (summaryRes.ok) {
+                    const summary = await summaryRes.json();
+                    renderTodayUsage(summary);
+                }
+
+                if (summary14Res.ok) {
+                    const summary14 = await summary14Res.json();
+                    renderTotalTokens(summary14);
+                }
+            } catch (err) {
+                console.error('Failed to load stats:', err);
+            }
+        }
+
+        function renderTotalTokens(summary) {
+            let totalTokens = 0;
+            let totalRequests = 0;
+            if (summary.daily) {
+                summary.daily.forEach(day => {
+                    if (day.agents) {
+                        day.agents.forEach(a => {
+                            totalTokens += (a.tokens || 0);
+                            totalRequests += (a.requests || 0);
+                        });
+                    }
+                });
+            }
+            document.getElementById('stat-total-tokens').textContent = formatTokens(totalTokens);
+            document.getElementById('stat-total-requests').textContent =
+                totalRequests >= 1000 ? (totalRequests / 1000).toFixed(1) + 'K' : totalRequests.toString();
+        }
+
+        function renderTopAgent(lb) {
+            if (!lb.ranking || lb.ranking.length === 0) return;
+            const top = lb.ranking[0];
+            document.getElementById('stat-top-agent').textContent = top.agent;
+        }
+
+        function renderTodayUsage(summary) {
+            if (!summary.daily || summary.daily.length === 0) {
+                document.getElementById('stat-today-usage').textContent = '0';
+                return;
+            }
+            let todayTokens = 0;
+            const today = summary.daily[summary.daily.length - 1];
+            if (today && today.agents) {
+                today.agents.forEach(a => {
+                    todayTokens += (a.tokens || 0);
+                });
+            }
+            document.getElementById('stat-today-usage').textContent = formatTokens(todayTokens);
+        }
+
+        // ===== Leaderboard =====
+        async function loadLeaderboard() {
+            const period = document.getElementById('leaderboard-period').value;
+            try {
+                const res = await fetch(`/api/leaderboard?period=${period}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                renderLeaderboard(data);
+            } catch (err) {
+                console.error('Failed to load leaderboard:', err);
+                document.getElementById('leaderboard-content').innerHTML =
+                    '<div class="py-4 text-center" style="color: var(--text-secondary)">Failed to load leaderboard</div>';
+            }
+        }
+
+        function renderLeaderboard(data) {
+            const container = document.getElementById('leaderboard-content');
+
+            if (!data.ranking || data.ranking.length === 0) {
+                container.innerHTML = '<div class="py-4 text-center" style="color: var(--text-secondary)">No data available</div>';
+                return;
+            }
+
+            const colors = getThemeColors();
+            const maxValue = Math.max(...data.ranking.map(r => r.value || r.tokens || 0));
+
+            const rankEmojis = ['🥇', '🥈', '🥉'];
+
+            const html = data.ranking.map((entry, idx) => {
+                const value = entry.value || 0;
+                const percent = maxValue > 0 ? (value / maxValue * 100) : 0;
+                const color = colors[idx % colors.length];
+                const rankDisplay = idx < 3 ? rankEmojis[idx] : `#${entry.rank}`;
+                const tokensDisplay = formatTokens(entry.tokens);
+                const valueDisplay = tokensDisplay + ' tokens';
+
+                return `
+                    <div class="leaderboard-item">
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="rank-badge">${rankDisplay}</span>
+                            <div class="flex-1">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <span class="agent-name">${entry.agent}</span>
+                                        <span class="agent-provider ml-1">(${entry.provider})</span>
+                                    </div>
+                                    <span class="metric-value">${valueDisplay}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3 ml-11">
+                            <div class="progress-bar-container flex-1">
+                                <div class="progress-bar-fill" style="width: ${percent}%; background: ${color}"></div>
+                            </div>
+                            <div class="metric-detail flex gap-3">
+                                <span>📝 ${tokensDisplay} tokens</span>
+                                <span>🔧 ${entry.requests} reqs</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = html;
+        }
+
+        function formatTokens(tokens) {
+            if (!tokens) return '0';
+            if (tokens >= 1000000) return (tokens / 1000000).toFixed(2) + 'M';
+            if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'K';
+            return tokens.toString();
+        }
+
+        // ===== Pod Status =====
+        async function loadPodStatus() {
+            try {
+                const [podsRes, healthRes, summaryRes] = await Promise.all([
+                    fetch('/api/pods'),
+                    fetch('/api/health'),
+                    fetch('/api/summary?days=1'),
+                ]);
+
+                if (!podsRes.ok || !healthRes.ok) return;
+
+                const podsData = await podsRes.json();
+                const healthData = await healthRes.json();
+                const summaryData = summaryRes.ok ? await summaryRes.json() : null;
+
+                renderPodStatus(podsData, healthData, summaryData);
+            } catch (err) {
+                console.error('Failed to load pod status:', err);
+            }
+        }
+
+        function renderPodStatus(podsData, healthData, summaryData) {
+            const container = document.getElementById('pod-status-content');
+            const colors = getThemeColors();
+
+            // Show last collection time
+            if (healthData.last_collection) {
+                document.getElementById('pod-last-collection').textContent =
+                    'Last collected: ' + healthData.last_collection;
+            }
+
+            // Get today's tokens per agent
+            const agentTokens = {};
+            const agentRequests = {};
+            if (summaryData && summaryData.daily) {
+                const today = summaryData.daily[summaryData.daily.length - 1];
+                if (today && today.agents) {
+                    today.agents.forEach(a => {
+                        agentTokens[a.agent] = (agentTokens[a.agent] || 0) + (a.tokens || 0);
+                        agentRequests[a.agent] = (agentRequests[a.agent] || 0) + (a.requests || 0);
+                    });
+                }
+            }
+
+            // Get provider health
+            const providerStatus = {};
+            if (healthData.providers) {
+                Object.entries(healthData.providers).forEach(([name, info]) => {
+                    providerStatus[name] = info.status;
+                });
+            }
+
+            if (!podsData.pods || podsData.pods.length === 0) {
+                container.innerHTML = '<div class="py-4 text-center" style="color: var(--text-secondary)">No pods configured</div>';
+                return;
+            }
+
+            const html = podsData.pods.map((pod, idx) => {
+                const status = pod.status === 'enabled' ? (providerStatus[pod.provider] || 'unknown') : 'disabled';
+                const dotClass = status === 'success' ? 'healthy' : 'unhealthy';
+                const tokens = agentTokens[pod.name] || 0;
+                const requests = agentRequests[pod.name] || 0;
+                const color = colors[idx % colors.length];
+                const version = pod.version || '?';
+                const uptime = pod.uptime || '?';
+                const restarts = pod.restarts != null ? pod.restarts : '?';
+                const avgMs = pod.avg_response_ms || 0;
+                const avgSec = avgMs > 0 ? (avgMs / 1000).toFixed(1) + 's' : '—';
+
+                // Format last active
+                let lastActive = '—';
+                if (pod.last_active) {
+                    const d = new Date(pod.last_active);
+                    const now = new Date();
+                    const diffMin = Math.floor((now - d) / 60000);
+                    if (diffMin < 1) lastActive = 'just now';
+                    else if (diffMin < 60) lastActive = diffMin + 'm ago';
+                    else if (diffMin < 1440) lastActive = Math.floor(diffMin / 60) + 'h ago';
+                    else lastActive = Math.floor(diffMin / 1440) + 'd ago';
+                }
+
+                return `
+                    <div class="p-3 rounded-lg" style="border: 1px solid var(--border); background: var(--bg-card)">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center gap-2">
+                                <span class="health-dot ${dotClass}"></span>
+                                <span class="agent-name text-sm">${pod.name}</span>
+                            </div>
+                            <span class="text-xs px-2 py-0.5 rounded" style="background: ${color}22; color: ${color}">${pod.provider}</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-1 text-xs" style="color: var(--text-secondary)">
+                            <span>📊 ${formatTokens(tokens)} tokens</span>
+                            <span>🔧 ${requests} reqs</span>
+                            <span>⚡ avg ${avgSec}</span>
+                            <span>🕐 ${lastActive}</span>
+                            <span>⏱️ up ${uptime}</span>
+                            <span>🔄 ${restarts} restarts</span>
+                        </div>
+                        <div class="mt-2 text-xs" style="color: var(--text-secondary); opacity: 0.7">
+                            v${version}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = html;
+        }
+
+        // ===== Response Time Chart =====
+        var responseTimeChart = null;
+
+        async function loadResponseTimeChart() {
+            const days = document.getElementById('days-selector').value;
+            try {
+                const res = await fetch(`/api/response-time?days=${days}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                renderResponseTimeChart(data);
+            } catch (err) {
+                console.error('Failed to load response time:', err);
+            }
+        }
+
+        function renderResponseTimeChart(data) {
+            if (!data.dates || data.dates.length === 0) return;
+
+            const ctx = document.getElementById('responseTimeChart').getContext('2d');
+            const colors = getThemeColors();
+            const gridColor = getThemeColor('--chart-grid');
+            const textColor = getThemeColor('--text-secondary');
+
+            const labels = data.dates.map(d => {
+                const date = new Date(d + 'T00:00:00');
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            });
+
+            const datasets = data.series.map((s, idx) => ({
+                label: s.agent,
+                data: s.data,
+                borderColor: colors[idx % colors.length],
+                backgroundColor: colors[idx % colors.length] + '33',
+                tension: 0.3,
+                fill: false,
+                pointRadius: 3,
+                borderWidth: 2,
+            }));
+
+            if (responseTimeChart) {
+                responseTimeChart.destroy();
+            }
+
+            responseTimeChart = new Chart(ctx, {
+                type: 'line',
+                data: { labels, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { intersect: false, mode: 'index' },
+                    scales: {
+                        x: {
+                            grid: { color: gridColor },
+                            ticks: { color: textColor, font: { size: 11 } },
+                        },
+                        y: {
+                            grid: { color: gridColor },
+                            ticks: { color: textColor, font: { size: 11 } },
+                            title: { display: true, text: 'Seconds', color: textColor, font: { size: 12 } }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { color: textColor, usePointStyle: true, padding: 16, font: { size: 12 } }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0,0,0,0.8)',
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': ' + context.raw.toFixed(1) + 's';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // ===== Health Check =====
+        async function loadHealth() {
+            try {
+                const res = await fetch('/api/health');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+
+                const dot = document.querySelector('#health-indicator .health-dot');
+                const text = document.getElementById('health-text');
+
+                if (data.status === 'healthy') {
+                    dot.className = 'health-dot healthy';
+                    text.textContent = 'healthy';
+                } else {
+                    dot.className = 'health-dot unhealthy';
+                    text.textContent = data.status;
+                }
+
+                // Update last refresh time
+                const refreshEl = document.getElementById('last-refresh');
+                const now = new Date();
+                refreshEl.textContent = `Last refresh: ${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+            } catch (err) {
+                const dot = document.querySelector('#health-indicator .health-dot');
+                const text = document.getElementById('health-text');
+                dot.className = 'health-dot unhealthy';
+                text.textContent = 'unreachable';
+            }
+        }
+
+        // ===== Auto-refresh (every 60s) =====
+        function refreshAll() {
+            loadStats();
+            loadLeaderboard();
+            loadHealth();
+            loadPodStatus();
+            loadResponseTimeChart();
+        }
+
+        // Initial load
+        (async function init() {
+            try {
+                await loadChart();
+                await refreshAll();
+            } catch(e) {
+                document.body.insertAdjacentHTML('afterbegin',
+                    '<div style="background:red;color:white;padding:10px;position:fixed;top:0;left:0;right:0;z-index:9999">JS Error: ' + e.message + '</div>');
+            }
+        })();
+
+        // Re-render chart with current theme colors
+        function updateChartColors() {
+            if (chartData) {
+                renderChart(chartData);
+            }
+        }
+
+        // Set interval for HTMX-style auto-refresh
+        setInterval(() => {
+            loadChart();
+            refreshAll();
+        }, 60000);
+
+        // Also re-render chart on theme change (observe attribute changes)
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach(m => {
+                if (m.attributeName === 'data-theme' && window.dailyChart) {
+                    setTimeout(updateChartColors, 50);
+                }
+            });
+        });
+        observer.observe(document.documentElement, { attributes: true });
+    </script>
+</body>
+</html>

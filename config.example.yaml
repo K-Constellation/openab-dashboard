@@ -1,0 +1,50 @@
+# OpenAB Dashboard Configuration
+# Copy this file to config.yaml and edit with your settings.
+
+database:
+  path: "./usage.db"
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+collector:
+  interval_seconds: 300        # Collect every 5 minutes
+  kubectl_path: "/usr/local/bin/kubectl"
+
+# Providers are generic — add any ACP-compatible CLI agent here.
+# The collector parses `tokens_per_event` and `agent_dispatch_ms` from dispatch logs.
+# This format is consistent across all OpenAB-supported CLIs.
+providers:
+  # Kiro CLI (Amazon Q / Kiro)
+  kiro:
+    enabled: true
+    pods:
+      - name: my-kiro-agent
+        deployment: openab-my-kiro
+        account_id: "kiro:user@example.com"
+
+  # Antigravity CLI (Google Gemini)
+  antigravity:
+    enabled: true
+    pods:
+      - name: my-agy-agent
+        deployment: openab-my-agy
+        account_id: "agy:user@example.com"
+        oauth_token_path: "/home/agent/.gemini/antigravity-cli/antigravity-oauth-token"  # optional
+
+  # OpenCode (open-source, any LLM provider)
+  # opencode:
+  #   enabled: true
+  #   pods:
+  #     - name: my-opencode
+  #       deployment: openab-opencode
+  #       account_id: "opencode:free"
+
+  # Claude Code (Anthropic)
+  # claude:
+  #   enabled: true
+  #   pods:
+  #     - name: my-claude
+  #       deployment: openab-claude
+  #       account_id: "claude:user@example.com"

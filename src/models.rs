@@ -1,0 +1,121 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsageRecord {
+    pub timestamp: DateTime<Utc>,
+    pub agent: String,
+    pub provider: String,
+    pub model: Option<String>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub credits_consumed: Option<f64>,
+    pub duration_ms: Option<i64>,
+    pub context_usage_pct: Option<f64>,
+    pub session_id: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaSnapshot {
+    pub timestamp: DateTime<Utc>,
+    pub account_id: String,
+    pub credits_used: Option<f64>,
+    pub credits_total: Option<f64>,
+    pub reset_at: Option<DateTime<Utc>>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailySummary {
+    pub date: String,
+    pub account_id: String,
+    pub agent: String,
+    pub provider: String,
+    pub total_credits: f64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub total_tokens: i64,
+    pub request_count: i64,
+    pub avg_duration_ms: i64,
+}
+
+// API response types
+#[derive(Debug, Serialize)]
+pub struct SummaryResponse {
+    pub period: Period,
+    pub daily: Vec<DailyData>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Period {
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DailyData {
+    pub date: String,
+    pub agents: Vec<AgentDailyData>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentDailyData {
+    pub agent: String,
+    pub provider: String,
+    pub credits: Option<f64>,
+    pub tokens: i64,
+    pub requests: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QuotaResponse {
+    pub accounts: Vec<AccountQuota>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountQuota {
+    pub id: String,
+    pub provider: String,
+    pub plan: Option<String>,
+    pub display_name: Option<String>,
+    pub credits_used: Option<f64>,
+    pub credits_total: Option<f64>,
+    pub usage_percent: Option<f64>,
+    pub reset_at: Option<String>,
+    pub days_remaining: Option<i64>,
+    pub last_updated: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LeaderboardResponse {
+    pub period: String,
+    pub metric: String,
+    pub ranking: Vec<RankEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RankEntry {
+    pub rank: usize,
+    pub agent: String,
+    pub provider: String,
+    pub value: Option<f64>,
+    pub requests: i64,
+    pub tokens: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub last_collection: Option<String>,
+    pub providers: std::collections::HashMap<String, ProviderHealth>,
+    pub db_size_mb: f64,
+    pub uptime_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProviderHealth {
+    pub status: String,
+    pub last_success: Option<String>,
+}
