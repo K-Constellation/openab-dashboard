@@ -69,6 +69,62 @@ cp config.example.yaml config.yaml
 ./target/release/openab-dashboard --config config.yaml --once
 ```
 
+### 使用 Docker 執行
+
+Dashboard 的收集器會呼叫本機的 `kubectl`，所以容器內需要有主機的
+kubeconfig 副本，以及可用的 `kubectl`（已內建於映像檔）。
+`docker-entrypoint.sh` 會複製掛載進來的 kubeconfig，並將其中的
+`127.0.0.1`/`localhost` API server 位址改寫成能連回主機的名稱
+（OrbStack 用 `k8s.orb.local`，其他情況用 `host.docker.internal`）。
+
+```bash
+cp config.example.yaml config.yaml
+# 編輯 config.yaml，然後：
+docker compose up -d --build
+```
+
+這會掛載 `~/.kube/config`（可用 `KUBECONFIG=/path/to/config` 覆寫），
+唯讀掛載進容器，並將 dashboard 對外開在 `http://localhost:8080`。
+容器工作目錄為 `/app/data`，因此 `config.example.yaml` 中的
+`database.path: "./usage.db"` 會解析為 `/app/data/usage.db`，並透過
+`openab-data` volume 持久保留。
+
+不使用 Compose 的話：
+
+```bash
+docker build -t openab-dashboard .
+docker run -d --name openab-dashboard \
+  -p 127.0.0.1:8080:8080 \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v ~/.kube/config:/host-kube/config:ro \
+  -v openab-data:/app/data \
+  --add-host host.docker.internal:host-gateway \
+  openab-dashboard
+```
+
+注意事項：
+- 預設 Compose 只將 dashboard 綁在 `127.0.0.1:8080`（localhost）。
+  若要開放給 LAN 或遠端存取，請用 `BIND_ADDR=0.0.0.0 docker compose up -d --build`。
+  Dashboard 沒有內建認證，開放所有 interface 時務必搭配 reverse proxy 或其他存取控制。
+- 上方 non-Compose `docker run` 範例也綁在 `127.0.0.1:8080`。若需要 LAN
+  或遠端存取，請將 `-p 127.0.0.1:8080:8080` 改為 `-p 0.0.0.0:8080:8080`，
+  並在 front 加上 reverse proxy 或其他存取控制。預設僅綁 localhost 是為了
+  避免無認證的 dashboard 意外暴露。
+- 容器以 non-root `appuser`（UID 1000）執行。`/app/data` 與複製到
+  `/home/appuser/.kube/config` 的 kubeconfig 對該使用者可寫入。
+- `~/.kube/config` 必須是單一絕對路徑；多個以冒號分隔的檔案，或開頭為 `~` 的路徑不支援 volume mount。
+- `--add-host host.docker.internal:host-gateway` 只有 Linux 需要；
+  Docker Desktop 和 OrbStack 已內建提供 `host.docker.internal`。
+- 若你的叢集無法透過 `host.docker.internal` / `k8s.orb.local` 連線
+  （例如遠端叢集），只要讓 `KUBECONFIG`／掛載的 kubeconfig 指向容器
+  已經能連上的位址即可，不需要改寫。
+- 隨時可用 `docker exec openab-dashboard kubectl get pods -A` 驗證連線。
+- 掛載 kubeconfig 等同於把叢集的 live credential 交給容器；請確保該檔案與執行主機的安全。
+- Dashboard 沒有內建認證；在沒有 reverse proxy 或其他存取控制的情況下，
+  請勿將 `8080` port 暴露到不可信的網路。
+- `Dockerfile` 會將下載的 `kubectl` 與 `dl.k8s.io` 公布的 SHA256 checksum 進行驗證。
+  若你變更 `KUBECTL_VERSION` 或在離線環境建置，請提供對應的 checksum。
+
 ## 設定檔
 
 ```yaml

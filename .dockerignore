@@ -1,0 +1,31 @@
+# Git
+.git/
+.gitignore
+
+# Rust build artifacts
+/target/
+
+# Local configuration and secrets
+config.yaml
+.env
+*.env
+
+# Databases
+*.db
+*.db-journal
+*.db-wal
+
+# Kubernetes credentials
+.kube/
+kubeconfig
+*kubeconfig*
+
+# Logs
+*.log
+
+# Editor and cache files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store

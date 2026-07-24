@@ -1,0 +1,26 @@
+services:
+  dashboard:
+    build: .
+    container_name: openab-dashboard
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:8080:8080"
+    volumes:
+      # Your dashboard config (copy from config.example.yaml)
+      - ./config.yaml:/app/config.yaml:ro
+      # Persist the SQLite database across restarts.
+      # The container working directory is /app/data, so database.path "./usage.db"
+      # in config.example.yaml resolves to /app/data/usage.db.
+      - openab-data:/app/data
+      # Host kubeconfig, mounted read-only. This must be a single absolute
+      # path (not a colon-separated list or a tilde-prefixed path).
+      - ${KUBECONFIG:-${HOME}/.kube/config}:/host-kube/config:ro
+    environment:
+      - RUST_LOG=info
+    extra_hosts:
+      # Needed on Linux hosts; Docker Desktop/OrbStack on macOS already
+      # provide host.docker.internal automatically.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  openab-data:
