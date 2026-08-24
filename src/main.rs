@@ -3,6 +3,9 @@ mod db;
 mod models;
 mod server;
 mod collector;
+mod pod_matching;
+
+pub(crate) use pod_matching::is_deployment_pod_name;
 
 use clap::Parser;
 use std::sync::Arc;
