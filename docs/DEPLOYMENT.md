@@ -1,181 +1,207 @@
 # OpenAB Dashboard — Deployment Guide
 
-## Phase 1: your-server Virtualenv (Current)
+## Native Rust Binary
 
 ### Prerequisites
 
-- Python 3.11+ on your-server
+- Rust 1.75+
 - `kubectl` configured with cluster access
-- Network access to pods (same machine)
+- Network access to pods from the host running the dashboard
 
-### Setup
+### Build
 
 ```bash
-ssh your-server
-cd ~/openab-dashboard
-
-# Create virtualenv
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Initialize database
-python -m collector.db init
-
-# Run collector once (test)
-python -m collector.main --once
-
-# Start web server (development)
-python -m server.main
+git clone https://github.com/masami-agent/openab-dashboard.git
+cd openab-dashboard
+cargo build --release
 ```
 
-### Running as Background Service
+### Configure
 
 ```bash
-# macOS launchd plist for collector
-# Location: ~/Library/LaunchAgents/com.openab.dashboard.plist
+cp config.example.yaml config.yaml
+# Edit config.yaml with your pods and kubectl path
+```
+
+### Run
+
+```bash
+./target/release/openab-dashboard --config config.yaml
+# Or on a custom port
+./target/release/openab-dashboard --config config.yaml --port 8080
+```
+
+Open http://localhost:8080.
+
+### Run as a Background Service
+
+**macOS (launchd):**
+
+```bash
+cp com.openab.dashboard.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.openab.dashboard.plist
 ```
 
-### Directory Structure on your-server
+**Linux (systemd):**
 
-```
-~/openab-dashboard/
-├── .venv/                  # Python virtualenv
-├── usage.db                # SQLite database (gitignored)
-├── config.yaml             # Active configuration
-├── collector/              # Data collection code
-├── server/                 # Web server code
-├── templates/              # Dashboard HTML
-├── static/                 # CSS, JS, images
-└── docs/                   # Design documents
-```
+Create `/etc/systemd/system/openab-dashboard.service`:
 
----
+```ini
+[Unit]
+Description=OpenAB Dashboard
+After=network.target
 
-## Phase 2: Docker Container (Future)
+[Service]
+Type=simple
+User=openab
+WorkingDirectory=/opt/openab-dashboard
+ExecStart=/opt/openab-dashboard/openab-dashboard --config /opt/openab-dashboard/config.yaml
+Restart=on-failure
 
-### Dockerfile
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-# SQLite DB on volume mount
-VOLUME ["/data"]
-ENV DB_PATH=/data/usage.db
-
-EXPOSE 8080
-
-CMD ["python", "-m", "server.main"]
+[Install]
+WantedBy=multi-user.target
 ```
 
-### Docker Compose (your-server)
+Then:
 
-```yaml
-version: "3.8"
-services:
-  dashboard:
-    build: .
-    ports:
-      - "8080:8080"
-    volumes:
-      - dashboard-data:/data
-      - ~/.kube/config:/root/.kube/config:ro  # kubectl access
-    environment:
-      - KUBECTL_PATH=/usr/local/bin/kubectl
-      - DB_PATH=/data/usage.db
-    restart: unless-stopped
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now openab-dashboard
+```
 
-volumes:
-  dashboard-data:
+### Remote Deploy with scp
+
+```bash
+scp target/release/openab-dashboard server:~/openab-dashboard/
+scp config.yaml server:~/openab-dashboard/
+ssh server "~/openab-dashboard/openab-dashboard --config ~/openab-dashboard/config.yaml"
 ```
 
 ---
 
-## Phase 3: K8s Pod (Future)
+## Docker Compose
 
-### Helm Values (sub-chart or standalone)
+### Prerequisites
 
-```yaml
-dashboard:
-  enabled: true
-  image: ghcr.io/openabdev/openab-dashboard:latest
-  port: 8080
-  persistence:
-    enabled: true
-    size: 1Gi
-  serviceAccount:
-    create: true
-    # Needs: pods/exec, pods/log (read-only)
-  config:
-    interval_seconds: 300
-    providers:
-      kiro:
-        enabled: true
-        pods: [openab-masami-kiro, openab-chloe-kiro]
-      antigravity:
-        enabled: true
-        pods: [openab-misaki-gemini]
+- Docker Engine 20.10+ or Docker Desktop / OrbStack
+- Docker Compose (the `docker compose` plugin)
+- `kubectl` configured on the host with access to your OpenAB pods
+
+### Configure
+
+```bash
+cp config.example.yaml config.yaml
+# Edit config.yaml with your pods and cluster settings
 ```
 
-### RBAC Requirements
+For Docker Compose, the container working directory is `/app/data`, so the
+default `database.path: "./usage.db"` in `config.example.yaml` resolves to
+`/app/data/usage.db` and is persisted in the `openab-data` Docker volume.
+
+### Build and Start
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:8080. By default, Compose binds the dashboard to `127.0.0.1:8080` (localhost only). To expose it on all interfaces — for example on a LAN or remote host — run `BIND_ADDR=0.0.0.0 docker compose up --build`. Only do this behind a reverse proxy or other access control, because the dashboard has no built-in authentication. SQLite data is persisted in the named Docker volume `openab-data` mounted at `/app/data`; because the container working directory is `/app/data`, the default `database.path: "./usage.db"` in `config.example.yaml` writes to `/app/data/usage.db`.
+
+### Choose the Host Kubeconfig
+
+`docker-compose.yml` reads the host kubeconfig path from the standard `KUBECONFIG` environment variable and mounts it read-only into the container at `/host-kube/config`. `docker-entrypoint.sh` copies it to `/home/appuser/.kube/config`, rewrites any `127.0.0.1`/`localhost` API server address to a container-reachable hostname, and exports `KUBECONFIG` for the dashboard process.
+
+`KUBECONFIG` must be a single absolute path (for example `/Users/<you>/.kube/config`). Colon-separated multi-file values or paths starting with `~` are not valid Docker Compose volume source paths.
+
+**Docker Desktop** (context `docker-desktop`, kubeconfig at `~/.kube/config`):
+
+```bash
+KUBECONFIG=$HOME/.kube/config docker compose up --build
+```
+
+**OrbStack** (context `orbstack`, kubeconfig at `~/.orbstack/k8s/config.yml`):
+
+```bash
+KUBECONFIG=$HOME/.orbstack/k8s/config.yml docker compose up --build
+```
+
+You can also export them for the current shell session:
+
+```bash
+export KUBECONFIG=$HOME/.kube/config
+docker compose up --build
+```
+
+Or create a `.env` file in the project root (not tracked by git) with absolute paths:
+
+```bash
+KUBECONFIG=/Users/<your-username>/.kube/config
+```
+
+### `localhost` / `127.0.0.1` Caveat
+
+Kubernetes configs generated by local runtimes often point the cluster server at `localhost` or `127.0.0.1`. Those addresses resolve to the container itself, not the host, so `kubectl` inside the container cannot reach the cluster.
+
+`docker-entrypoint.sh` handles the common cases automatically: it detects whether `k8s.orb.local` resolves (OrbStack) and rewrites the copied kubeconfig to use it; otherwise it falls back to `host.docker.internal`.
+
+- **Docker Desktop:** `host.docker.internal` or `kubernetes.docker.internal`.
+- **OrbStack:** run `orb config set k8s.kubeconfig_use_domain true` and use the hostname written to `~/.orbstack/k8s/config.yml` (for example `k8s.orb.local`), or `host.docker.internal` if the API server is exposed on the host.
+- **Linux Docker Engine:** `docker-compose.yml` includes `extra_hosts: ["host.docker.internal:host-gateway"]` so `host.docker.internal` resolves to the host gateway.
+
+For example, edit the kubeconfig cluster server entry:
 
 ```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list"]
-  - apiGroups: [""]
-    resources: ["pods/exec"]
-    verbs: ["create"]
-  - apiGroups: [""]
-    resources: ["pods/log"]
-    verbs: ["get"]
+clusters:
+  - cluster:
+      server: https://host.docker.internal:6443
+    name: docker-desktop
 ```
+
+### Image Details
+
+- `Dockerfile` is a multi-stage build: the `builder` stage compiles a release binary with Rust, and the `runtime` image contains the binary, CA certificates, `kubectl`, and `docker-entrypoint.sh`.
+- The image runs as a non-root `appuser` (UID 1000). `/app/data` and `/home/appuser/.kube` are created and owned by `appuser` so the entrypoint can copy and persist data at runtime.
+- `kubectl` is downloaded from `dl.k8s.io` together with its published SHA256 checksum and verified with `sha256sum` before being installed. If you override `KUBECTL_VERSION` or build in an air-gapped environment, you must supply the matching checksum.
+- `/app/data` is declared as a volume for SQLite persistence and is mounted by `docker-compose.yml` from the `openab-data` named volume. The container working directory is `/app/data`, so `database.path: "./usage.db"` in `config.example.yaml` resolves to `/app/data/usage.db`.
+- `config.yaml` is mounted read-only at `/app/config.yaml`.
+- `docker-entrypoint.sh` copies the mounted host kubeconfig from `/host-kube/config` to `/home/appuser/.kube/config` before starting the dashboard.
 
 ---
 
-## Configuration
+## Configuration Reference
 
-### config.yaml
+### `database.path`
+
+- Native binary: relative path like `./usage.db` in the directory where you run the binary (set in `config.example.yaml`).
+- Docker Compose: same `./usage.db` from `config.example.yaml`, which resolves to `/app/data/usage.db` because the container working directory is `/app/data`; persisted in the `openab-data` volume.
+
+### `collector.kubectl_path`
+
+- Native binary: the host kubectl, often `/usr/local/bin/kubectl`.
+- Docker Compose: `/usr/local/bin/kubectl` (installed in the image).
+
+### Minimal Example
 
 ```yaml
-# Database
 database:
-  path: "./usage.db"       # Phase 1: relative path
-  # path: "/data/usage.db" # Phase 2/3: volume mount
+  # Use a relative path: "./usage.db" in the native run directory,
+  # or "/app/data/usage.db" in Docker Compose because the working directory is /app/data.
+  path: "./usage.db"
 
-# Web server
 server:
   host: "0.0.0.0"
   port: 8080
 
-# Collector
 collector:
-  interval_seconds: 300    # 5 minutes
+  interval_seconds: 300
   kubectl_path: "/usr/local/bin/kubectl"
 
-# Providers
 providers:
   kiro:
     enabled: true
     pods:
       - name: masami
         deployment: openab-masami-kiro
-        account_id: "kiro:user"
-      - name: chloe
-        deployment: openab-chloe-kiro
-        account_id: "kiro:user"
+        account_id: "kiro:user@example.com"
 
   antigravity:
     enabled: true
@@ -183,7 +209,6 @@ providers:
       - name: misaki
         deployment: openab-misaki-gemini
         account_id: "agy:user@example.com"
-        oauth_token_path: "/home/agent/.gemini/antigravity-cli/antigravity-oauth-token"
 ```
 
 ---
@@ -191,5 +216,13 @@ providers:
 ## Monitoring the Dashboard Itself
 
 - **Health endpoint:** `GET /api/health`
-- **Logs:** stdout (or `dashboard.log` in Phase 1)
-- **Alerts:** If `last_collection` > 15 minutes old, something is wrong
+- **Logs:** stdout (or the terminal / container logs)
+- **Alerts:** If `last_collection` is more than 15 minutes old, the collector may be unable to reach the cluster or the configured pods.
+
+---
+
+## Security Considerations
+
+- Mounting a host kubeconfig into the container gives the dashboard live cluster credentials. Treat the config file and the host it runs on as sensitive.
+- The dashboard has no built-in authentication or authorization. Do not expose port `8080` to untrusted networks; run it behind a reverse proxy or another access-control layer if external access is required.
+- The image runs as a non-root `appuser` (UID 1000) and verifies the downloaded `kubectl` binary against its published SHA256 checksum from `dl.k8s.io` before installation.

@@ -69,6 +69,70 @@ cp config.example.yaml config.yaml
 ./target/release/openab-dashboard --config config.yaml --once
 ```
 
+### Run with Docker
+
+The dashboard's collector shells out to `kubectl`, so the container needs a
+copy of the host's kubeconfig and a working `kubectl` binary (already baked
+into the image). `docker-entrypoint.sh` copies the mounted kubeconfig and
+rewrites any `127.0.0.1`/`localhost` API server address to a hostname that
+resolves back to the host (`k8s.orb.local` on OrbStack, otherwise
+`host.docker.internal`).
+
+```bash
+cp config.example.yaml config.yaml
+# edit config.yaml, then:
+docker compose up -d --build
+```
+
+This mounts `~/.kube/config` (override with `KUBECONFIG=/path/to/config`)
+read-only into the container and exposes the dashboard on
+`http://localhost:8080`. The container working directory is `/app/data`, so
+`database.path: "./usage.db"` in `config.example.yaml` resolves to
+`/app/data/usage.db` and is persisted across restarts in the `openab-data`
+volume.
+
+Or without Compose:
+
+```bash
+docker build -t openab-dashboard .
+docker run -d --name openab-dashboard \
+  -p 127.0.0.1:8080:8080 \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v ~/.kube/config:/host-kube/config:ro \
+  -v openab-data:/app/data \
+  --add-host host.docker.internal:host-gateway \
+  openab-dashboard
+```
+
+Notes:
+- By default, Compose binds the dashboard to `127.0.0.1:8080` (localhost only).
+  To expose it on all interfaces — for example on a LAN or remote host — run
+  `BIND_ADDR=0.0.0.0 docker compose up -d --build`. Only do this behind a
+  reverse proxy or other access control, because the dashboard has no built-in
+  authentication.
+- The non-Compose `docker run` example above also binds to `127.0.0.1:8080`.
+  If you need LAN or remote access, replace `-p 127.0.0.1:8080:8080` with
+  `-p 0.0.0.0:8080:8080` and place a reverse proxy or other access control in
+  front of it. The default localhost-only binding avoids exposing the
+  unauthenticated dashboard accidentally.
+- The container runs as a non-root `appuser` (UID 1000). `/app/data` and the
+  copied kubeconfig at `/home/appuser/.kube/config` are writable by that user.
+- `~/.kube/config` must be a single absolute path; `KUBECONFIG` with multiple colon-separated files or a leading `~` is not supported by the volume mount.
+- `--add-host host.docker.internal:host-gateway` is only needed on Linux;
+  Docker Desktop and OrbStack already provide `host.docker.internal`.
+- If your cluster isn't reachable through `host.docker.internal` /
+  `k8s.orb.local` (e.g. a remote cluster), just point `KUBECONFIG`/the
+  mounted kubeconfig at a server address the container can already reach —
+  no rewriting needed in that case.
+- Verify connectivity any time with `docker exec openab-dashboard kubectl get pods -A`.
+- Mounting a kubeconfig gives the container live cluster credentials; keep the
+  config file and the host it runs on secure.
+- The dashboard has no built-in authentication; do not expose port `8080` to
+  untrusted networks without a reverse proxy or other access control.
+- The Dockerfile verifies the downloaded `kubectl` binary against its published
+  SHA256 checksum from `dl.k8s.io`. If you change `KUBECTL_VERSION` or build
+  offline, provide the matching checksum.
+
 ## Configuration
 
 ```yaml
