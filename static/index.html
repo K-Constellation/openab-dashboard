@@ -1427,6 +1427,7 @@
             loadSessionState().then(() => {
                 renderSessionUI();
                 if (window.openabSession.current) {
+                    loadChart();
                     refreshAll();
                 } else {
                     window.initDashboard();
