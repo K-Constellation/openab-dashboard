@@ -119,3 +119,70 @@ pub struct ProviderHealth {
     pub status: String,
     pub last_success: Option<String>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RecordingSessionStatus {
+    #[default]
+    Active,
+    Paused,
+    Archived,
+}
+
+impl RecordingSessionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Archived => "archived",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "active" => Some(Self::Active),
+            "paused" => Some(Self::Paused),
+            "archived" => Some(Self::Archived),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordingSession {
+    pub id: i64,
+    pub name: String,
+    pub status: RecordingSessionStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordingInterval {
+    pub id: i64,
+    pub session_id: i64,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordingSessionEvent {
+    pub id: i64,
+    pub session_id: i64,
+    pub event_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionPodSnapshot {
+    pub id: i64,
+    pub session_id: i64,
+    pub pod: String,
+    pub provider: String,
+    pub deployment: String,
+    pub timestamp: DateTime<Utc>,
+    pub status: String,
+    pub uptime: Option<String>,
+    pub restarts: i32,
+    pub version: Option<String>,
+    pub last_active: Option<String>,
+    pub avg_response_ms: i64,
+}

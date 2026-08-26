@@ -3,8 +3,10 @@ pub mod kiro;
 pub mod antigravity;
 
 use std::sync::Arc;
+use chrono::Utc;
 use crate::AppState;
 use crate::config::ProviderConfig;
+use crate::models::SessionPodSnapshot;
 use tokio::time::{self, Duration};
 
 pub async fn collect_once(state: Arc<AppState>) -> anyhow::Result<()> {
@@ -30,6 +32,38 @@ pub async fn collect_once(state: Arc<AppState>) -> anyhow::Result<()> {
     // Update daily summary
     let _ = state.db.update_daily_summary();
 
+    // Capture configured-pod snapshots only while a session is active.
+    // Errors here are logged, not propagated, so they cannot transition session state.
+    if let Ok(Some(session)) = state.db.get_active_recording_session() {
+        let live_pods = get_live_pod_info(&config.collector.kubectl_path).await;
+
+        for (provider_name, provider_config) in &config.providers.providers {
+            for pod in &provider_config.pods {
+                let live = live_pods.iter().find(|lp| lp.deployment.contains(&pod.name));
+                let last_active = state.db.get_last_active(&pod.name).unwrap_or(None);
+                let avg_ms = state.db.get_avg_duration_for_agent(&pod.name, 1).unwrap_or(0.0) as i64;
+
+                let snapshot = SessionPodSnapshot {
+                    id: 0,
+                    session_id: session.id,
+                    pod: pod.name.clone(),
+                    provider: provider_name.clone(),
+                    deployment: pod.deployment.clone(),
+                    timestamp: Utc::now(),
+                    status: if provider_config.enabled { "enabled".into() } else { "disabled".into() },
+                    uptime: live.map(|l| l.age.clone()),
+                    restarts: live.map(|l| l.restarts).unwrap_or(0),
+                    version: live.map(|l| l.version.clone()),
+                    last_active,
+                    avg_response_ms: avg_ms,
+                };
+                if let Err(e) = state.db.insert_pod_snapshot(&snapshot) {
+                    tracing::warn!("failed to capture pod snapshot for {}: {}", pod.name, e);
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -47,6 +81,8 @@ async fn collect_provider(
         let count = records.len() as i64;
 
         for record in &records {
+            // Baseline events always persist. Active-session association happens
+            // inside the database if the timestamp falls within an open interval.
             let _ = state.db.insert_usage_event(record, &pod.account_id);
         }
         total_count += count;
@@ -137,6 +173,51 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     result
+}
+
+struct LivePodInfo {
+    deployment: String,
+    age: String,
+    restarts: i32,
+    version: String,
+}
+
+async fn get_live_pod_info(kubectl: &str) -> Vec<LivePodInfo> {
+    let output = tokio::process::Command::new(kubectl)
+        .args(["get", "pods", "-o", "jsonpath={range .items[*]}{.metadata.name}|{.metadata.creationTimestamp}|{.status.containerStatuses[0].restartCount}|{.spec.containers[0].image}{\"\\n\"}{end}"])
+        .output()
+        .await;
+
+    let Ok(output) = output else { return vec![] };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    stdout.lines().filter_map(|line| {
+        let parts: Vec<&str> = line.split('|').collect();
+        if parts.len() < 4 { return None; }
+        let name = parts[0].to_string();
+        let created = parts[1];
+        let restarts: i32 = parts[2].parse().unwrap_or(0);
+        let image = parts[3];
+
+        // Calculate uptime
+        let age = if let Ok(ts) = created.parse::<chrono::DateTime<chrono::Utc>>() {
+            let duration = chrono::Utc::now() - ts;
+            if duration.num_days() > 0 {
+                format!("{}d", duration.num_days())
+            } else if duration.num_hours() > 0 {
+                format!("{}h", duration.num_hours())
+            } else {
+                format!("{}m", duration.num_minutes())
+            }
+        } else {
+            "?".to_string()
+        };
+
+        // Extract version from image tag
+        let version = image.rsplit(':').next().unwrap_or("unknown").to_string();
+
+        Some(LivePodInfo { deployment: name, age, restarts, version })
+    }).collect()
 }
 
 pub async fn run_scheduler(state: Arc<AppState>) {
