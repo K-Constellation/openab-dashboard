@@ -121,6 +121,7 @@ pub struct ProviderHealth {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum RecordingSessionStatus {
     #[default]
     Active,
@@ -185,4 +186,22 @@ pub struct SessionPodSnapshot {
     pub version: Option<String>,
     pub last_active: Option<String>,
     pub avg_response_ms: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_serde_lowercase() {
+        let active = serde_json::to_string(&RecordingSessionStatus::Active).unwrap();
+        assert_eq!(active, "\"active\"");
+        let paused = serde_json::to_string(&RecordingSessionStatus::Paused).unwrap();
+        assert_eq!(paused, "\"paused\"");
+        let archived = serde_json::to_string(&RecordingSessionStatus::Archived).unwrap();
+        assert_eq!(archived, "\"archived\"");
+
+        let parsed: RecordingSessionStatus = serde_json::from_str("\"active\"").unwrap();
+        assert_eq!(parsed, RecordingSessionStatus::Active);
+    }
 }

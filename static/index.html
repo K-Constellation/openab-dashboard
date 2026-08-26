@@ -1140,7 +1140,6 @@
                 renderBaselinePanel(panel);
             } else {
                 // Active/paused/archived session view
-                days.value = '365';
                 days.classList.add('hidden');
                 period.classList.add('hidden');
                 healthText.textContent = safeText(s.name) + ' • ' + s.status;
@@ -1183,12 +1182,10 @@
             const id = parseInt(value, 10) || null;
             if (!id) {
                 window.openabSession.current = null;
-                document.getElementById('days-selector').value = '14';
             } else {
                 const found = window.openabSession.sessions.find(s => s.id === id);
                 if (found) {
                     window.openabSession.current = found;
-                    document.getElementById('days-selector').value = '365';
                 }
             }
             refreshAll();
@@ -1285,7 +1282,6 @@
                 }
                 closeDeleteModal();
                 window.openabSession.current = null;
-                document.getElementById('days-selector').value = '14';
                 await loadSessionState();
                 refreshAll();
             } catch (e) {
@@ -1317,6 +1313,68 @@
                 }
             } catch (e) { console.error(e); }
         }
+
+        // ===== Session-aware fetch overrides =====
+        // For session views, use the documented unbounded paths (no days period)
+        // while preserving baseline behavior.
+
+        const _originalLoadChart = window.loadChart;
+        window.loadChart = async function() {
+            const s = window.openabSession.current;
+            const url = s ? '/api/summary' : `/api/summary?days=${document.getElementById('days-selector').value}`;
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                chartData = await res.json();
+                renderChart(chartData);
+            } catch (err) {
+                console.error('Failed to load chart data:', err);
+                document.getElementById('chart-period').textContent = 'Failed to load data';
+            }
+        };
+
+        const _originalLoadResponseTimeChart = window.loadResponseTimeChart;
+        window.loadResponseTimeChart = async function() {
+            const s = window.openabSession.current;
+            const url = s ? '/api/response-time' : `/api/response-time?days=${document.getElementById('days-selector').value}`;
+            try {
+                const res = await fetch(url);
+                if (!res.ok) return;
+                const data = await res.json();
+                renderResponseTimeChart(data);
+            } catch (err) {
+                console.error('Failed to load response time:', err);
+            }
+        };
+
+        const _originalLoadStats = window.loadStats;
+        window.loadStats = async function() {
+            const s = window.openabSession.current;
+            try {
+                const [leaderboardRes, summaryTodayRes, summaryTotalRes] = await Promise.all([
+                    fetch('/api/leaderboard?period=month'),
+                    fetch('/api/summary?days=1'),
+                    s ? fetch('/api/summary') : fetch('/api/summary?days=14'),
+                ]);
+
+                if (leaderboardRes.ok) {
+                    const lb = await leaderboardRes.json();
+                    renderTopAgent(lb);
+                }
+
+                if (summaryTodayRes.ok) {
+                    const summary = await summaryTodayRes.json();
+                    renderTodayUsage(summary);
+                }
+
+                if (summaryTotalRes.ok) {
+                    const summary14 = await summaryTotalRes.json();
+                    renderTotalTokens(summary14);
+                }
+            } catch (err) {
+                console.error('Failed to load stats:', err);
+            }
+        };
 
         document.addEventListener('DOMContentLoaded', () => {
             loadSessionState().then(() => {

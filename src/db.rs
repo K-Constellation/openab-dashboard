@@ -331,6 +331,54 @@ impl Database {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    pub fn get_daily_summary_for_session_unbounded(&self, session_id: i64) -> Result<Vec<DailySummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT date(ue.timestamp) as d, ue.account_id, COALESCE(ue.agent,'unknown'),
+                    COALESCE(ue.provider,'unknown'), 0.0,
+                    COALESCE(SUM(ue.input_tokens), 0), COALESCE(SUM(ue.output_tokens), 0),
+                    COALESCE(SUM(ue.total_tokens), 0), COUNT(*),
+                    COALESCE(AVG(ue.duration_ms), 0)
+             FROM usage_events ue
+             JOIN recording_session_events se ON ue.id = se.event_id
+             WHERE se.session_id = ?1
+             GROUP BY d, ue.account_id, ue.agent, ue.provider
+             ORDER BY d ASC, ue.agent ASC"
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(DailySummary {
+                date: row.get(0)?,
+                account_id: row.get(1)?,
+                agent: row.get(2)?,
+                provider: row.get(3)?,
+                total_credits: row.get::<_, f64>(4).unwrap_or(0.0),
+                total_input_tokens: row.get::<_, i64>(5).unwrap_or(0),
+                total_output_tokens: row.get::<_, i64>(6).unwrap_or(0),
+                total_tokens: row.get::<_, i64>(7).unwrap_or(0),
+                request_count: row.get::<_, i64>(8).unwrap_or(0),
+                avg_duration_ms: row.get::<_, i64>(9).unwrap_or(0),
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_avg_duration_for_session_unbounded(&self, session_id: i64) -> Result<Vec<(String, String, f64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT ue.agent, date(ue.timestamp) as d, AVG(ue.duration_ms)
+             FROM usage_events ue
+             JOIN recording_session_events se ON ue.id = se.event_id
+             WHERE se.session_id = ?1
+               AND ue.duration_ms IS NOT NULL
+             GROUP BY ue.agent, d
+             ORDER BY d ASC"
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get::<_, f64>(2).unwrap_or(0.0)))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     pub fn get_latest_quota(&self) -> Result<Vec<(String, Option<f64>, Option<f64>, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -947,5 +995,26 @@ mod tests {
         let avg = db.get_avg_duration_for_session(session_id, 1).unwrap();
         assert_eq!(avg.len(), 2);
         assert!(avg.iter().any(|(a, _, _)| a == "masami"));
+    }
+
+    #[test]
+    fn unbounded_session_summary_and_response_time() {
+        let db = in_mem_db();
+        let session_id = db.create_recording_session("recording").unwrap();
+
+        let mut e = sample_event(Utc::now(), "masami");
+        e.duration_ms = Some(120);
+        db.insert_usage_event(&e, "kiro:user").unwrap();
+
+        // unbounded read returns the same in-session data as a bounded 1-day read
+        let unbounded = db.get_daily_summary_for_session_unbounded(session_id).unwrap();
+        let bounded = db.get_daily_summary_for_session(session_id, 1).unwrap();
+        assert_eq!(unbounded.iter().map(|s| s.request_count).sum::<i64>(), 1);
+        assert_eq!(bounded.iter().map(|s| s.request_count).sum::<i64>(), unbounded.iter().map(|s| s.request_count).sum::<i64>());
+
+        let avg_unbounded = db.get_avg_duration_for_session_unbounded(session_id).unwrap();
+        let avg_bounded = db.get_avg_duration_for_session(session_id, 1).unwrap();
+        assert_eq!(avg_unbounded.len(), 1);
+        assert_eq!(avg_bounded.len(), avg_unbounded.len());
     }
 }

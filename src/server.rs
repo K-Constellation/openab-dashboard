@@ -74,13 +74,13 @@ async fn api_summary(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SummaryParams>,
 ) -> Json<SummaryResponse> {
-    let days = params.days.unwrap_or(14);
     let db = &state.db;
 
-    let summaries = if let Some(session_id) = params.session_id {
-        db.get_daily_summary_for_session(session_id, days).unwrap_or_default()
-    } else {
-        db.get_daily_summary(days).unwrap_or_default()
+    let summaries = match (params.session_id, params.days) {
+        (Some(session_id), Some(days)) => db.get_daily_summary_for_session(session_id, days).unwrap_or_default(),
+        (Some(session_id), None) => db.get_daily_summary_for_session_unbounded(session_id).unwrap_or_default(),
+        (None, Some(days)) => db.get_daily_summary(days).unwrap_or_default(),
+        (None, None) => db.get_daily_summary(14).unwrap_or_default(),
     };
 
     // Group by date
@@ -106,7 +106,13 @@ async fn api_summary(
         .collect();
 
     let end = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let start = (chrono::Utc::now() - chrono::Duration::days(days)).format("%Y-%m-%d").to_string();
+    let start = match (params.session_id, params.days) {
+        (Some(_), None) => daily.first().map(|d| d.date.clone()).unwrap_or(end.clone()),
+        _ => {
+            let days = params.days.unwrap_or(14);
+            (chrono::Utc::now() - chrono::Duration::days(days)).format("%Y-%m-%d").to_string()
+        }
+    };
 
     Json(SummaryResponse {
         period: Period { start, end },
@@ -240,13 +246,13 @@ async fn api_response_time(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ResponseTimeParams>,
 ) -> Json<serde_json::Value> {
-    let days = params.days.unwrap_or(14);
     let db = &state.db;
 
-    let data = if let Some(session_id) = params.session_id {
-        db.get_avg_duration_for_session(session_id, days).unwrap_or_default()
-    } else {
-        db.get_avg_duration_by_agent(days).unwrap_or_default()
+    let data = match (params.session_id, params.days) {
+        (Some(session_id), Some(days)) => db.get_avg_duration_for_session(session_id, days).unwrap_or_default(),
+        (Some(session_id), None) => db.get_avg_duration_for_session_unbounded(session_id).unwrap_or_default(),
+        (None, Some(days)) => db.get_avg_duration_by_agent(days).unwrap_or_default(),
+        (None, None) => db.get_avg_duration_by_agent(14).unwrap_or_default(),
     };
 
     // Group by date, with agents as series
