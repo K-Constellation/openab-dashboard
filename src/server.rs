@@ -16,8 +16,8 @@ use serde::Deserialize;
 #[folder = "static/"]
 struct StaticAssets;
 
-pub async fn start(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
-    let app = Router::new()
+pub fn build_app(state: Arc<AppState>) -> Router {
+    Router::new()
         .route("/", get(index))
         .route("/api/summary", get(api_summary))
         .route("/api/quota", get(api_quota))
@@ -32,8 +32,11 @@ pub async fn start(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
         .route("/api/recording-sessions/:id/archive", post(archive_session))
         .route("/api/recording-sessions/:id", delete(delete_session))
         .route("/static/*path", get(static_handler))
-        .with_state(state);
+        .with_state(state)
+}
 
+pub async fn start(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
+    let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -458,4 +461,130 @@ async fn get_live_pod_info(kubectl: &str) -> Vec<LivePodInfo> {
     }).collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, DatabaseConfig, ServerConfig, CollectorConfig, ProvidersConfig};
+    use crate::db::Database;
+    use crate::models::UsageRecord;
+    use chrono::Utc;
 
+    async fn test_server() -> (u16, reqwest::Client) {
+        let db = Database::new(":memory:").unwrap();
+        db.initialize().unwrap();
+
+        let config = Config {
+            database: DatabaseConfig { path: ":memory:".into() },
+            server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
+            collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+            providers: ProvidersConfig { providers: std::collections::HashMap::new() },
+        };
+        let state = Arc::new(AppState { db, config });
+        let app = build_app(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        (port, client)
+    }
+
+    #[tokio::test]
+    async fn api_summary_baseline_vs_session() {
+        // Baseline event, not associated with any session
+        let baseline_record = UsageRecord {
+            timestamp: Utc::now() - chrono::Duration::hours(1),
+            agent: "baseline".into(),
+            provider: "kiro".into(),
+            ..Default::default()
+        };
+
+        // We need a state handle to insert data, but the db moved into AppState.
+        // Seed data before building the app.
+        let (port2, client2, session_id) = {
+            let db = Database::new(":memory:").unwrap();
+            db.initialize().unwrap();
+
+            db.insert_usage_event(&baseline_record, "kiro:user").unwrap();
+
+            let session_id = db.create_recording_session("rec").unwrap();
+            let in_session = UsageRecord {
+                timestamp: Utc::now(),
+                agent: "insession".into(),
+                provider: "kiro".into(),
+                ..Default::default()
+            };
+            db.insert_usage_event(&in_session, "kiro:user").unwrap();
+
+            let config = Config {
+                database: DatabaseConfig { path: ":memory:".into() },
+                server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
+                collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+                providers: ProvidersConfig { providers: std::collections::HashMap::new() },
+            };
+            let state = Arc::new(AppState { db, config });
+            let app = build_app(state);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+
+            (port, reqwest::Client::new(), session_id)
+        };
+
+        let base: serde_json::Value = client2
+            .get(format!("http://127.0.0.1:{}/api/summary?days=1", port2))
+            .send().await.unwrap()
+            .json().await.unwrap();
+        let base_requests: i64 = base["daily"].as_array().unwrap().iter()
+            .flat_map(|d| d["agents"].as_array().into_iter().flatten())
+            .map(|a| a["requests"].as_i64().unwrap())
+            .sum();
+        assert_eq!(base_requests, 2);
+
+        let session: serde_json::Value = client2
+            .get(format!("http://127.0.0.1:{}/api/summary?days=1&session_id={}", port2, session_id))
+            .send().await.unwrap()
+            .json().await.unwrap();
+        let session_requests: i64 = session["daily"].as_array().unwrap().iter()
+            .flat_map(|d| d["agents"].as_array().into_iter().flatten())
+            .map(|a| a["requests"].as_i64().unwrap())
+            .sum();
+        assert_eq!(session_requests, 1);
+    }
+
+    #[tokio::test]
+    async fn recording_session_lifecycle_boundary() {
+        let (port, client) = test_server().await;
+
+        // Empty name -> 400
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions", port))
+            .json(&serde_json::json!({ "name": "" }))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 400);
+
+        // Valid name -> 201
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions", port))
+            .json(&serde_json::json!({ "name": "good" }))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 201);
+
+        // Duplicate / open session exists -> 400
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions", port))
+            .json(&serde_json::json!({ "name": "good" }))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 400);
+
+        // Delete unarchived -> 400
+        let r = client
+            .delete(format!("http://127.0.0.1:{}/api/recording-sessions/1", port))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 400);
+    }
+}
