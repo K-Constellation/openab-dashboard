@@ -1161,7 +1161,7 @@
             const sessions = window.openabSession.sessions;
             let html = '<select id="session-selector" class="theme-select text-xs" onchange="onSessionSelect(this.value)"><option value="">Baseline</option>';
             sessions.forEach(s => {
-                html += `<option value="${s.id}">${safeText(s.name)} (${s.status})</option>`;
+                html += `<option value="${s.id}">${safeText(s.name)}</option>`;
             });
             html += '</select>';
             html += '<button class="theme-select text-xs" style="background: var(--accent-4); color: var(--bg-primary)" onclick="showNewSessionModal()">+ New Recording</button>';
