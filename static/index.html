@@ -1376,6 +1376,29 @@
             }
         };
 
+        const _originalLoadHealth = window.loadHealth;
+        window.loadHealth = async function() {
+            const s = window.openabSession && window.openabSession.current;
+            const dot = document.querySelector('#health-indicator .health-dot');
+            const text = document.getElementById('health-text');
+            let savedDot, savedText;
+            if (s) {
+                savedDot = dot ? dot.className : '';
+                savedText = text ? text.textContent : '';
+            }
+            await _originalLoadHealth();
+            if (s && dot && text) {
+                dot.className = savedDot;
+                text.textContent = savedText;
+            }
+        };
+
+        const _originalRefreshAll = window.refreshAll;
+        window.refreshAll = function() {
+            _originalRefreshAll();
+            renderSessionUI();
+        };
+
         document.addEventListener('DOMContentLoaded', () => {
             loadSessionState().then(() => {
                 if (window.openabSession.current) refreshAll();
