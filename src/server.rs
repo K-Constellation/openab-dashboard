@@ -76,11 +76,10 @@ async fn api_summary(
 ) -> Json<SummaryResponse> {
     let db = &state.db;
 
-    let summaries = match (params.session_id, params.days) {
-        (Some(session_id), Some(days)) => db.get_daily_summary_for_session(session_id, days).unwrap_or_default(),
-        (Some(session_id), None) => db.get_daily_summary_for_session_unbounded(session_id).unwrap_or_default(),
-        (None, Some(days)) => db.get_daily_summary(days).unwrap_or_default(),
-        (None, None) => db.get_daily_summary(14).unwrap_or_default(),
+    let summaries = if let Some(session_id) = params.session_id {
+        db.get_daily_summary_for_session_unbounded(session_id).unwrap_or_default()
+    } else {
+        db.get_daily_summary(params.days.unwrap_or(14)).unwrap_or_default()
     };
 
     // Group by date
@@ -106,12 +105,11 @@ async fn api_summary(
         .collect();
 
     let end = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let start = match (params.session_id, params.days) {
-        (Some(_), None) => daily.first().map(|d| d.date.clone()).unwrap_or(end.clone()),
-        _ => {
-            let days = params.days.unwrap_or(14);
-            (chrono::Utc::now() - chrono::Duration::days(days)).format("%Y-%m-%d").to_string()
-        }
+    let start = if let Some(_session_id) = params.session_id {
+        daily.first().map(|d| d.date.clone()).unwrap_or(end.clone())
+    } else {
+        let days = params.days.unwrap_or(14);
+        (chrono::Utc::now() - chrono::Duration::days(days)).format("%Y-%m-%d").to_string()
     };
 
     Json(SummaryResponse {
@@ -248,11 +246,10 @@ async fn api_response_time(
 ) -> Json<serde_json::Value> {
     let db = &state.db;
 
-    let data = match (params.session_id, params.days) {
-        (Some(session_id), Some(days)) => db.get_avg_duration_for_session(session_id, days).unwrap_or_default(),
-        (Some(session_id), None) => db.get_avg_duration_for_session_unbounded(session_id).unwrap_or_default(),
-        (None, Some(days)) => db.get_avg_duration_by_agent(days).unwrap_or_default(),
-        (None, None) => db.get_avg_duration_by_agent(14).unwrap_or_default(),
+    let data = if let Some(session_id) = params.session_id {
+        db.get_avg_duration_for_session_unbounded(session_id).unwrap_or_default()
+    } else {
+        db.get_avg_duration_by_agent(params.days.unwrap_or(14)).unwrap_or_default()
     };
 
     // Group by date, with agents as series
@@ -675,5 +672,84 @@ mod tests {
             .header("content-type", "application/json")
             .send().await.unwrap();
         assert_eq!(r.status(), 204);
+    }
+
+    #[test]
+    fn live_pod_matching_uses_deployment_ownership() {
+        use crate::config::PodConfig;
+
+        let live = vec![
+            LivePodInfo { deployment: "masami-deployment-7c8d9f-x9z".into(), age: "2h".into(), restarts: 0, version: "v1".into() },
+            LivePodInfo { deployment: "kiro-dispatch-abc123-y7x".into(), age: "3h".into(), restarts: 1, version: "v2".into() },
+        ];
+
+        let masami = PodConfig {
+            name: "mason".into(),
+            deployment: "masami-deployment".into(),
+            account_id: "kiro:masami".into(),
+            oauth_token_path: None,
+        };
+        let matched = live.iter().find(|lp| lp.deployment.contains(&masami.deployment));
+        assert!(matched.is_some());
+        assert_eq!(matched.unwrap().version, "v1");
+
+        // Same display name, different deployment must not match
+        let other = PodConfig {
+            name: "mason".into(),
+            deployment: "kiro-dispatch".into(),
+            account_id: "kiro:other".into(),
+            oauth_token_path: None,
+        };
+        let matched = live.iter().find(|lp| lp.deployment.contains(&other.deployment));
+        assert!(matched.is_some());
+        assert_eq!(matched.unwrap().version, "v2");
+    }
+
+    #[tokio::test]
+    async fn api_summary_ignores_days_when_session_id_present() {
+        let (port2, client2, session_id) = {
+            let db = Database::new(":memory:").unwrap();
+            db.initialize().unwrap();
+
+            let session_id = db.create_recording_session("prod-reg").unwrap();
+
+            // A single in-session event right now
+            let event = UsageRecord {
+                timestamp: Utc::now(),
+                agent: "reg-agent".into(),
+                provider: "kiro".into(),
+                ..Default::default()
+            };
+            db.insert_usage_event(&event, "kiro:user").unwrap();
+
+            let config = Config {
+                database: DatabaseConfig { path: ":memory:".into() },
+                server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
+                collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+                providers: ProvidersConfig { providers: std::collections::HashMap::new() },
+            };
+            let state = Arc::new(AppState { db, config });
+            let app = build_app(state);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+
+            (port, reqwest::Client::new(), session_id)
+        };
+
+        // days=0 would exclude the event if the days filter were applied to the session.
+        let summary: serde_json::Value = client2
+            .get(format!("http://127.0.0.1:{}/api/summary?days=0&session_id={}", port2, session_id))
+            .send().await.unwrap()
+            .json().await.unwrap();
+
+        let total: i64 = summary["daily"].as_array().unwrap().iter()
+            .flat_map(|d| d["agents"].as_array().into_iter().flatten())
+            .map(|a| a["requests"].as_i64().unwrap())
+            .sum();
+        // Session-scoped query must ignore the days parameter and return all session data.
+        assert_eq!(total, 1);
     }
 }

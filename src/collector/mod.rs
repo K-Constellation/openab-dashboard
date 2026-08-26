@@ -39,9 +39,10 @@ pub async fn collect_once(state: Arc<AppState>) -> anyhow::Result<()> {
 
         for (provider_name, provider_config) in &config.providers.providers {
             for pod in &provider_config.pods {
-                let live = live_pods.iter().find(|lp| lp.deployment.contains(&pod.name));
-                let last_active = state.db.get_last_active(&pod.name).unwrap_or(None);
-                let avg_ms = state.db.get_avg_duration_for_agent(&pod.name, 1).unwrap_or(0.0) as i64;
+                // Match live pods by configured deployment ownership, not display name
+                let live = live_pods.iter().find(|lp| lp.deployment.contains(&pod.deployment));
+                let last_active = state.db.get_last_active_for_session_agent(session.id, &pod.name, provider_name).unwrap_or(None);
+                let avg_ms = state.db.get_avg_duration_for_session_agent(session.id, &pod.name, provider_name).unwrap_or(0.0) as i64;
 
                 let snapshot = SessionPodSnapshot {
                     id: 0,

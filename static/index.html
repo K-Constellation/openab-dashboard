@@ -1173,6 +1173,14 @@
                 html += '<button class="theme-select text-xs" style="background: #ef4444; color: #fff" onclick="showArchiveModal()">Archive</button>';
             } else if (s.status === 'archived') {
                 html += '<span class="text-xs" style="color: var(--text-secondary)">archived</span>';
+                html += '<select id="session-selector" class="theme-select text-xs" onchange="onSessionSelect(this.value)"><option value="">Baseline</option>';
+                const sessions = window.openabSession.sessions;
+                sessions.forEach(sess => {
+                    if (sess.status !== 'archived') return;
+                    const selected = sess.id === s.id ? ' selected' : '';
+                    html += `<option value="${sess.id}"${selected}>${safeText(sess.name)} (${sess.status})</option>`;
+                });
+                html += '</select>';
                 html += '<button class="theme-select text-xs" style="background: #ef4444; color: #fff" onclick="showDeleteModal()">Delete</button>';
             }
             const err = window.openabSession.error;
@@ -1186,13 +1194,14 @@
             const id = parseInt(value, 10) || null;
             if (!id) {
                 window.openabSession.current = null;
+                window.initDashboard();
             } else {
                 const found = window.openabSession.sessions.find(s => s.id === id);
                 if (found) {
                     window.openabSession.current = found;
                 }
+                refreshAll();
             }
-            refreshAll();
             renderSessionUI();
         }
 
@@ -1293,7 +1302,11 @@
                 closeDeleteModal();
                 window.openabSession.current = null;
                 await loadSessionState();
-                refreshAll();
+                if (window.openabSession.current) {
+                    refreshAll();
+                } else {
+                    window.initDashboard();
+                }
             } catch (e) {
                 err.textContent = 'Network error.';
                 err.classList.remove('hidden');

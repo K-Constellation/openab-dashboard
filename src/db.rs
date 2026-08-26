@@ -486,6 +486,39 @@ impl Database {
         }
     }
 
+    pub fn get_last_active_for_session_agent(&self, session_id: i64, agent: &str, provider: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT ue.timestamp FROM usage_events ue
+             JOIN recording_session_events se ON ue.id = se.event_id
+             WHERE se.session_id = ?1 AND ue.agent = ?2 AND ue.provider = ?3
+             ORDER BY ue.id DESC LIMIT 1",
+            params![session_id, agent, provider],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(ts) => Ok(Some(ts)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn get_avg_duration_for_session_agent(&self, session_id: i64, agent: &str, provider: &str) -> Result<f64> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT AVG(ue.duration_ms) FROM usage_events ue
+             JOIN recording_session_events se ON ue.id = se.event_id
+             WHERE se.session_id = ?1 AND ue.agent = ?2 AND ue.provider = ?3
+               AND ue.duration_ms IS NOT NULL",
+            params![session_id, agent, provider],
+            |row| row.get::<_, f64>(0),
+        );
+        match result {
+            Ok(v) => Ok(v),
+            Err(_) => Ok(0.0),
+        }
+    }
+
     pub fn create_recording_session(&self, name: &str) -> Result<i64> {
         let name = name.trim();
         if name.is_empty() || name.len() > 80 {
@@ -1081,5 +1114,34 @@ mod tests {
         let avg_bounded = db.get_avg_duration_for_session(session_id, 1).unwrap();
         assert_eq!(avg_unbounded.len(), 1);
         assert_eq!(avg_bounded.len(), avg_unbounded.len());
+    }
+
+    #[test]
+    fn session_only_last_active_and_avg_response() {
+        let db = in_mem_db();
+        let session_id = db.create_recording_session("recording").unwrap();
+
+        // Session-local events for one agent/provider, both inside the active interval
+        let base = Utc::now() + chrono::Duration::seconds(5);
+        let mut e1 = sample_event(base, "masami");
+        e1.duration_ms = Some(100);
+        db.insert_usage_event(&e1, "kiro:user").unwrap();
+
+        let mut e2 = sample_event(base + chrono::Duration::seconds(5), "masami");
+        e2.duration_ms = Some(300);
+        db.insert_usage_event(&e2, "kiro:user").unwrap();
+
+        // Baseline event for the same agent must not be associated after archiving
+        db.archive_recording_session(session_id).unwrap();
+        let mut baseline = sample_event(Utc::now() + chrono::Duration::seconds(30), "masami");
+        baseline.session_id = Some("-1".into());
+        baseline.duration_ms = Some(500);
+        db.insert_usage_event(&baseline, "kiro:other").unwrap();
+
+        let last = db.get_last_active_for_session_agent(session_id, "masami", "kiro").unwrap();
+        assert_eq!(last, Some(e2.timestamp.to_rfc3339()));
+
+        let avg = db.get_avg_duration_for_session_agent(session_id, "masami", "kiro").unwrap();
+        assert!((avg - 200.0).abs() < 0.01);
     }
 }
