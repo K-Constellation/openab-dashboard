@@ -9,27 +9,6 @@ use crate::config::ProviderConfig;
 use crate::models::SessionPodSnapshot;
 use tokio::time::{self, Duration};
 
-// Exact deployment-owned pod matcher.
-// A live pod name matches a configured deployment only when it is:
-//   <deployment>-<suffix1>-<suffix2>
-// where suffix1 and suffix2 are non-empty.
-fn deployment_owned_pod_match(pod_name: &str, deployment: &str) -> bool {
-    if pod_name.len() <= deployment.len() + 1 {
-        return false;
-    }
-    let prefix = if deployment.ends_with('-') {
-        deployment.to_string()
-    } else {
-        format!("{}-", deployment)
-    };
-    if !pod_name.starts_with(&prefix) {
-        return false;
-    }
-    let rest = &pod_name[prefix.len()..];
-    let parts: Vec<&str> = rest.split('-').collect();
-    parts.len() == 2 && parts.iter().all(|s| !s.is_empty())
-}
-
 pub async fn collect_once(state: Arc<AppState>) -> anyhow::Result<()> {
     let config = &state.config;
 
@@ -60,8 +39,7 @@ pub async fn collect_once(state: Arc<AppState>) -> anyhow::Result<()> {
 
         for (provider_name, provider_config) in &config.providers.providers {
             for pod in &provider_config.pods {
-                // Match live pods by exact deployment ownership
-                let live = live_pods.iter().find(|lp| deployment_owned_pod_match(&lp.deployment, &pod.deployment));
+                let live = live_pods.iter().find(|lp| lp.deployment.contains(&pod.name));
                 let last_active = state.db.get_last_active_for_session_agent(session.id, &pod.name, provider_name).unwrap_or(None);
                 let avg_ms = state.db.get_avg_duration_for_session_agent(session.id, &pod.name, provider_name).unwrap_or(0.0) as i64;
 
