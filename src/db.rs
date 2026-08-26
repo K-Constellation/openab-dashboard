@@ -893,4 +893,59 @@ mod tests {
         db.archive_recording_session(id).unwrap();
         assert!(db.delete_recording_session(id).is_ok());
     }
+
+    #[test]
+    fn session_name_validation() {
+        let db = in_mem_db();
+
+        assert!(db.create_recording_session("").is_err());
+        assert!(db.create_recording_session("   ").is_err());
+        assert!(db.create_recording_session("a".repeat(81).as_str()).is_err());
+
+        let _ = db.create_recording_session("unique").unwrap();
+        assert!(db.create_recording_session("unique").is_err());
+    }
+
+    #[test]
+    fn baseline_and_session_summary_differ() {
+        let db = in_mem_db();
+
+        // Baseline event before any session
+        let before = sample_event(Utc::now() - chrono::Duration::hours(1), "pre");
+        db.insert_usage_event(&before, "kiro:user").unwrap();
+
+        let session_id = db.create_recording_session("recording").unwrap();
+        let now = Utc::now();
+        let in_session = sample_event(now, "in");
+        db.insert_usage_event(&in_session, "kiro:user").unwrap();
+
+        let baseline = db.get_daily_summary(1).unwrap();
+        let session = db.get_daily_summary_for_session(session_id, 1).unwrap();
+
+        // baseline contains both events; session read contains only the associated one
+        assert_eq!(baseline.iter().map(|s| s.request_count).sum::<i64>(), 2);
+        assert_eq!(session.iter().map(|s| s.request_count).sum::<i64>(), 1);
+    }
+
+    #[test]
+    fn session_leaderboard_and_response_time_filter() {
+        let db = in_mem_db();
+        let session_id = db.create_recording_session("recording").unwrap();
+
+        let now = Utc::now();
+        let mut e1 = sample_event(now, "masami");
+        e1.duration_ms = Some(100);
+        let mut e2 = sample_event(now, "chloe");
+        e2.duration_ms = Some(200);
+        db.insert_usage_event(&e1, "kiro:user").unwrap();
+        db.insert_usage_event(&e2, "kiro:user").unwrap();
+
+        let leaderboard = db.get_leaderboard_for_session(session_id).unwrap();
+        assert_eq!(leaderboard.len(), 2);
+        assert_eq!(leaderboard.iter().map(|(_, _, _, _, r)| r).sum::<i64>(), 2);
+
+        let avg = db.get_avg_duration_for_session(session_id, 1).unwrap();
+        assert_eq!(avg.len(), 2);
+        assert!(avg.iter().any(|(a, _, _)| a == "masami"));
+    }
 }

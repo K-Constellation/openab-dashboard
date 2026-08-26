@@ -1,9 +1,9 @@
 use axum::{
     Router,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Json},
-    routing::get,
+    routing::{delete, get, post},
 };
 use rust_embed::Embed;
 use std::sync::Arc;
@@ -25,6 +25,12 @@ pub async fn start(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
         .route("/api/health", get(api_health))
         .route("/api/response-time", get(api_response_time))
         .route("/api/pods", get(api_pods))
+        .route("/api/recording-sessions", get(list_sessions).post(create_session))
+        .route("/api/recording-sessions/open", get(get_open_session))
+        .route("/api/recording-sessions/:id/pause", post(pause_session))
+        .route("/api/recording-sessions/:id/resume", post(resume_session))
+        .route("/api/recording-sessions/:id/archive", post(archive_session))
+        .route("/api/recording-sessions/:id", delete(delete_session))
         .route("/static/*path", get(static_handler))
         .with_state(state);
 
@@ -58,6 +64,7 @@ struct SummaryParams {
     days: Option<i64>,
     agent: Option<String>,
     provider: Option<String>,
+    session_id: Option<i64>,
 }
 
 async fn api_summary(
@@ -66,7 +73,12 @@ async fn api_summary(
 ) -> Json<SummaryResponse> {
     let days = params.days.unwrap_or(14);
     let db = &state.db;
-    let summaries = db.get_daily_summary(days).unwrap_or_default();
+
+    let summaries = if let Some(session_id) = params.session_id {
+        db.get_daily_summary_for_session(session_id, days).unwrap_or_default()
+    } else {
+        db.get_daily_summary(days).unwrap_or_default()
+    };
 
     // Group by date
     let mut daily_map: std::collections::BTreeMap<String, Vec<AgentDailyData>> = std::collections::BTreeMap::new();
@@ -129,6 +141,7 @@ async fn api_quota(State(state): State<Arc<AppState>>) -> Json<QuotaResponse> {
 struct LeaderboardParams {
     period: Option<String>,
     metric: Option<String>,
+    session_id: Option<i64>,
 }
 
 async fn api_leaderboard(
@@ -137,34 +150,49 @@ async fn api_leaderboard(
 ) -> Json<LeaderboardResponse> {
     let period = params.period.unwrap_or_else(|| "month".into());
     let metric = params.metric.unwrap_or_else(|| "tokens".into());
-    let days: i64 = match period.as_str() {
-        "today" => 1,
-        "week" => 7,
-        _ => 30,
-    };
 
     let db = &state.db;
-    let summaries = db.get_daily_summary(days).unwrap_or_default();
 
-    // Aggregate by agent
-    let mut agent_totals: std::collections::HashMap<String, (String, f64, i64, i64)> = std::collections::HashMap::new();
-    for s in summaries {
-        let entry = agent_totals.entry(s.agent.clone()).or_insert((s.provider.clone(), 0.0, 0, 0));
-        entry.1 += s.total_credits;
-        entry.2 += s.total_tokens;
-        entry.3 += s.request_count;
-    }
+    let mut ranking: Vec<RankEntry> = if let Some(session_id) = params.session_id {
+        let rows = db.get_leaderboard_for_session(session_id).unwrap_or_default();
+        rows.into_iter()
+            .map(|(agent, provider, credits, tokens, requests)| {
+                let value = match metric.as_str() {
+                    "credits" => if credits > 0.0 { Some(credits) } else { None },
+                    "requests" => Some(requests as f64),
+                    _ => Some(tokens as f64),
+                };
+                RankEntry { rank: 0, agent, provider, value, requests, tokens }
+            })
+            .collect()
+    } else {
+        let days: i64 = match period.as_str() {
+            "today" => 1,
+            "week" => 7,
+            _ => 30,
+        };
+        let summaries = db.get_daily_summary(days).unwrap_or_default();
 
-    let mut ranking: Vec<RankEntry> = agent_totals.into_iter()
-        .map(|(agent, (provider, credits, tokens, requests))| {
-            let value = match metric.as_str() {
-                "credits" => if credits > 0.0 { Some(credits) } else { None },
-                "requests" => Some(requests as f64),
-                _ => Some(tokens as f64),
-            };
-            RankEntry { rank: 0, agent, provider, value, requests, tokens }
-        })
-        .collect();
+        // Aggregate by agent
+        let mut agent_totals: std::collections::HashMap<String, (String, f64, i64, i64)> = std::collections::HashMap::new();
+        for s in summaries {
+            let entry = agent_totals.entry(s.agent.clone()).or_insert((s.provider.clone(), 0.0, 0, 0));
+            entry.1 += s.total_credits;
+            entry.2 += s.total_tokens;
+            entry.3 += s.request_count;
+        }
+
+        agent_totals.into_iter()
+            .map(|(agent, (provider, credits, tokens, requests))| {
+                let value = match metric.as_str() {
+                    "credits" => if credits > 0.0 { Some(credits) } else { None },
+                    "requests" => Some(requests as f64),
+                    _ => Some(tokens as f64),
+                };
+                RankEntry { rank: 0, agent, provider, value, requests, tokens }
+            })
+            .collect()
+    };
 
     // Sort by value descending
     ranking.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
@@ -202,6 +230,7 @@ async fn api_health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> 
 #[derive(Deserialize)]
 struct ResponseTimeParams {
     days: Option<i64>,
+    session_id: Option<i64>,
 }
 
 async fn api_response_time(
@@ -210,7 +239,12 @@ async fn api_response_time(
 ) -> Json<serde_json::Value> {
     let days = params.days.unwrap_or(14);
     let db = &state.db;
-    let data = db.get_avg_duration_by_agent(days).unwrap_or_default();
+
+    let data = if let Some(session_id) = params.session_id {
+        db.get_avg_duration_for_session(session_id, days).unwrap_or_default()
+    } else {
+        db.get_avg_duration_by_agent(days).unwrap_or_default()
+    };
 
     // Group by date, with agents as series
     let mut daily_map: std::collections::BTreeMap<String, std::collections::HashMap<String, f64>> = std::collections::BTreeMap::new();
@@ -235,7 +269,19 @@ async fn api_response_time(
     }))
 }
 
-async fn api_pods(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+#[derive(Deserialize)]
+struct PodsParams {
+    session_id: Option<i64>,
+}
+
+async fn api_pods(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PodsParams>,
+) -> Json<serde_json::Value> {
+    if let Some(session_id) = params.session_id {
+        return Json(session_pods(&state.db, session_id));
+    }
+
     let config = &state.config;
     let mut pods = vec![];
 
@@ -269,6 +315,102 @@ async fn api_pods(State(state): State<Arc<AppState>>) -> Json<serde_json::Value>
     }
 
     Json(serde_json::json!({ "pods": pods }))
+}
+
+fn session_pods(db: &crate::db::Database, session_id: i64) -> serde_json::Value {
+    let snapshots = db.get_pod_snapshots_for_session(session_id).unwrap_or_default();
+    let pods: Vec<serde_json::Value> = snapshots.into_iter().map(|s| {
+        serde_json::json!({
+            "name": s.pod,
+            "provider": s.provider,
+            "deployment": s.deployment,
+            "status": s.status,
+            "uptime": s.uptime,
+            "restarts": s.restarts,
+            "version": s.version,
+            "last_active": s.last_active,
+            "avg_response_ms": s.avg_response_ms,
+        })
+    }).collect();
+    serde_json::json!({ "pods": pods })
+}
+
+async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Vec<RecordingSession>> {
+    Json(state.db.list_recording_sessions().unwrap_or_default())
+}
+
+async fn get_open_session(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.db.get_open_recording_session() {
+        Ok(Some(s)) => Json(s).into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateSession {
+    name: String,
+}
+
+async fn create_session(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateSession>,
+) -> Result<(StatusCode, Json<RecordingSession>), (StatusCode, String)> {
+    let name = payload.name.trim();
+    if name.is_empty() || name.len() > 80 {
+        return Err((StatusCode::BAD_REQUEST, "session name must be non-empty and at most 80 characters".into()));
+    }
+    let id = state.db.create_recording_session(&payload.name)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let session = state.db.get_recording_session_by_id(id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "session not found".into()))?;
+    Ok((StatusCode::CREATED, Json(session)))
+}
+
+async fn pause_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<RecordingSession>, (StatusCode, String)> {
+    state.db.pause_recording_session(id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let session = state.db.get_recording_session_by_id(id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "session not found".into()))?;
+    Ok(Json(session))
+}
+
+async fn resume_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<RecordingSession>, (StatusCode, String)> {
+    state.db.resume_recording_session(id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let session = state.db.get_recording_session_by_id(id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "session not found".into()))?;
+    Ok(Json(session))
+}
+
+async fn archive_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<RecordingSession>, (StatusCode, String)> {
+    state.db.archive_recording_session(id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let session = state.db.get_recording_session_by_id(id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "session not found".into()))?;
+    Ok(Json(session))
+}
+
+async fn delete_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    state.db.delete_recording_session(id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 struct LivePodInfo {
