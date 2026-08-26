@@ -1248,7 +1248,10 @@
             if (!s) return;
             const err = document.getElementById('archive-error');
             try {
-                const res = await fetch(`/api/recording-sessions/${s.id}/archive`, { method: 'POST' });
+                const res = await fetch(`/api/recording-sessions/${s.id}/archive`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
                 if (!res.ok) {
                     const text = await res.text();
                     err.textContent = text || 'Error ' + res.status;
@@ -1277,7 +1280,10 @@
             if (!s) return;
             const err = document.getElementById('delete-error');
             try {
-                const res = await fetch(`/api/recording-sessions/${s.id}`, { method: 'DELETE' });
+                const res = await fetch(`/api/recording-sessions/${s.id}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' }
+                });
                 if (!res.ok) {
                     const text = await res.text();
                     err.textContent = text || 'Error ' + res.status;
@@ -1300,7 +1306,10 @@
             window.openabSession.error = null;
             renderSessionUI();
             try {
-                const res = await fetch(`/api/recording-sessions/${s.id}/pause`, { method: 'POST' });
+                const res = await fetch(`/api/recording-sessions/${s.id}/pause`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
                 if (res.ok) {
                     await loadSessionState();
                     refreshAll();
@@ -1322,7 +1331,10 @@
             window.openabSession.error = null;
             renderSessionUI();
             try {
-                const res = await fetch(`/api/recording-sessions/${s.id}/resume`, { method: 'POST' });
+                const res = await fetch(`/api/recording-sessions/${s.id}/resume`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
                 if (res.ok) {
                     await loadSessionState();
                     refreshAll();

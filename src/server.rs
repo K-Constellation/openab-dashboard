@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json},
     routing::{delete, get, post},
 };
@@ -377,10 +377,19 @@ async fn create_session(
     Ok((StatusCode::CREATED, Json(session)))
 }
 
+fn require_json_content_type(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
+    match headers.get("content-type").and_then(|v| v.to_str().ok()) {
+        Some(ct) if ct.split(';').next().map(|s| s.trim() == "application/json").unwrap_or(false) => Ok(()),
+        _ => Err((StatusCode::UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json".into())),
+    }
+}
+
 async fn pause_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
+    headers: HeaderMap,
 ) -> Result<Json<RecordingSession>, (StatusCode, String)> {
+    require_json_content_type(&headers)?;
     state.db.pause_recording_session(id)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let session = state.db.get_recording_session_by_id(id)
@@ -392,7 +401,9 @@ async fn pause_session(
 async fn resume_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
+    headers: HeaderMap,
 ) -> Result<Json<RecordingSession>, (StatusCode, String)> {
+    require_json_content_type(&headers)?;
     state.db.resume_recording_session(id)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let session = state.db.get_recording_session_by_id(id)
@@ -404,7 +415,9 @@ async fn resume_session(
 async fn archive_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
+    headers: HeaderMap,
 ) -> Result<Json<RecordingSession>, (StatusCode, String)> {
+    require_json_content_type(&headers)?;
     state.db.archive_recording_session(id)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let session = state.db.get_recording_session_by_id(id)
@@ -416,7 +429,9 @@ async fn archive_session(
 async fn delete_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
+    headers: HeaderMap,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    require_json_content_type(&headers)?;
     state.db.delete_recording_session(id)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
@@ -590,7 +605,75 @@ mod tests {
         // Delete unarchived -> 400
         let r = client
             .delete(format!("http://127.0.0.1:{}/api/recording-sessions/1", port))
+            .header("content-type", "application/json")
             .send().await.unwrap();
         assert_eq!(r.status(), 400);
+    }
+
+    #[tokio::test]
+    async fn recording_session_lifecycle_requires_json_content_type() {
+        let (port, client) = test_server().await;
+
+        // Create a session with JSON content type
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions", port))
+            .json(&serde_json::json!({ "name": "csrf-test" }))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 201);
+        let session: RecordingSession = r.json().await.unwrap();
+        assert_eq!(session.status, RecordingSessionStatus::Active);
+
+        // Pause without Content-Type -> 415, status unchanged
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions/{}/pause", port, session.id))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 415);
+        let current: RecordingSession = client
+            .get(format!("http://127.0.0.1:{}/api/recording-sessions/open", port))
+            .send().await.unwrap()
+            .json().await.unwrap();
+        assert_eq!(current.status, RecordingSessionStatus::Active);
+
+        // Pause with form content type -> 415, status unchanged
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions/{}/pause", port, session.id))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 415);
+
+        // Pause with JSON; charset -> 200 and status paused
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions/{}/pause", port, session.id))
+            .header("content-type", "application/json; charset=utf-8")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 200);
+        let current: RecordingSession = client
+            .get(format!("http://127.0.0.1:{}/api/recording-sessions/open", port))
+            .send().await.unwrap()
+            .json().await.unwrap();
+        assert_eq!(current.status, RecordingSessionStatus::Paused);
+
+        // Archive with JSON -> 200 and archived
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions/{}/archive", port, session.id))
+            .header("content-type", "application/json")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 200);
+        let archived: RecordingSession = r.json().await.unwrap();
+        assert_eq!(archived.status, RecordingSessionStatus::Archived);
+
+        // Delete with form content type -> 415
+        let r = client
+            .delete(format!("http://127.0.0.1:{}/api/recording-sessions/{}", port, session.id))
+            .header("content-type", "multipart/form-data")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 415);
+
+        // Delete with JSON -> 204
+        let r = client
+            .delete(format!("http://127.0.0.1:{}/api/recording-sessions/{}", port, session.id))
+            .header("content-type", "application/json")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 204);
     }
 }
