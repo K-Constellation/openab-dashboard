@@ -8,6 +8,7 @@ use axum::{
 use rust_embed::Embed;
 use std::sync::Arc;
 use crate::AppState;
+use crate::is_deployment_pod_name;
 use crate::models::*;
 use serde::Deserialize;
 
@@ -243,8 +244,9 @@ async fn api_pods(State(state): State<Arc<AppState>>) -> Json<serde_json::Value>
 
     for (provider_name, provider_config) in &config.providers.providers {
         for pod in &provider_config.pods {
-            // Find matching live pod info
-            let live = live_pods.iter().find(|lp| lp.deployment.contains(&pod.name));
+            // Kubernetes pod names follow `<deployment>-<rs-hash>-<pod-hash>`,
+            // while `pod.name` is a free-form display label and is not reliable for this lookup.
+            let live = live_pods.iter().find(|lp| is_deployment_pod_name(&lp.pod_name, &pod.deployment));
 
             // Get last active time from DB
             let last_active = state.db.get_last_active(&pod.name).unwrap_or(None);
@@ -270,7 +272,7 @@ async fn api_pods(State(state): State<Arc<AppState>>) -> Json<serde_json::Value>
 }
 
 struct LivePodInfo {
-    deployment: String,
+    pod_name: String,
     age: String,
     restarts: i32,
     version: String,
@@ -310,6 +312,8 @@ async fn get_live_pod_info(kubectl: &str) -> Vec<LivePodInfo> {
         // Extract version from image tag
         let version = image.rsplit(':').next().unwrap_or("unknown").to_string();
 
-        Some(LivePodInfo { deployment: name, age, restarts, version })
+        Some(LivePodInfo { pod_name: name, age, restarts, version })
     }).collect()
 }
+
+
