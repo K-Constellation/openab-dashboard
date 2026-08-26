@@ -434,6 +434,27 @@ async fn delete_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// Exact deployment-owned pod matcher.
+// A live pod name matches a configured deployment only when it is:
+//   <deployment>-<suffix1>-<suffix2>
+// where suffix1 and suffix2 are non-empty.
+fn deployment_owned_pod_match(pod_name: &str, deployment: &str) -> bool {
+    if pod_name.len() <= deployment.len() + 1 {
+        return false;
+    }
+    let prefix = if deployment.ends_with('-') {
+        deployment.to_string()
+    } else {
+        format!("{}-", deployment)
+    };
+    if !pod_name.starts_with(&prefix) {
+        return false;
+    }
+    let rest = &pod_name[prefix.len()..];
+    let parts: Vec<&str> = rest.split('-').collect();
+    parts.len() == 2 && parts.iter().all(|s| !s.is_empty())
+}
+
 struct LivePodInfo {
     pod_name: String,
     age: String,
@@ -676,33 +697,19 @@ mod tests {
 
     #[test]
     fn live_pod_matching_uses_deployment_ownership() {
-        use crate::config::PodConfig;
+        assert!(deployment_owned_pod_match("masami-deployment-7c8d9f-x9z", "masami-deployment"));
+        assert!(deployment_owned_pod_match("kiro-dispatch-abc123-y7x", "kiro-dispatch"));
 
-        let live = vec![
-            LivePodInfo { deployment: "masami-deployment-7c8d9f-x9z".into(), age: "2h".into(), restarts: 0, version: "v1".into() },
-            LivePodInfo { deployment: "kiro-dispatch-abc123-y7x".into(), age: "3h".into(), restarts: 1, version: "v2".into() },
-        ];
-
-        let masami = PodConfig {
-            name: "mason".into(),
-            deployment: "masami-deployment".into(),
-            account_id: "kiro:masami".into(),
-            oauth_token_path: None,
-        };
-        let matched = live.iter().find(|lp| lp.deployment.contains(&masami.deployment));
-        assert!(matched.is_some());
-        assert_eq!(matched.unwrap().version, "v1");
-
-        // Same display name, different deployment must not match
-        let other = PodConfig {
-            name: "mason".into(),
-            deployment: "kiro-dispatch".into(),
-            account_id: "kiro:other".into(),
-            oauth_token_path: None,
-        };
-        let matched = live.iter().find(|lp| lp.deployment.contains(&other.deployment));
-        assert!(matched.is_some());
-        assert_eq!(matched.unwrap().version, "v2");
+        // Must not match only as a substring/prefix of another pod name
+        assert!(!deployment_owned_pod_match("other-masami-deployment-7c8d9f-x9z", "masami-deployment"));
+        assert!(!deployment_owned_pod_match("masami-deployment-7c8d9f", "masami-deployment"));
+        assert!(!deployment_owned_pod_match("masami-deployment-7c8d9f-x9z-extra", "masami-deployment"));
+        assert!(!deployment_owned_pod_match("masami-deployment-7c8d9f-", "masami-deployment"));
+        assert!(!deployment_owned_pod_match("masami-deployment--7c8d9f-x9z", "masami-deployment"));
+        assert!(!deployment_owned_pod_match("masami-deployment-7c8d9f--x9z", "masami-deployment"));
+        assert!(!deployment_owned_pod_match("masami-deployment", "masami-deployment"));
+        assert!(!deployment_owned_pod_match("masami-deploymentabc-x9z-y7x", "masami-deployment"));
+        assert!(!deployment_owned_pod_match("kiro-dispatch-abc123-y7x", "masami-deployment"));
     }
 
     #[tokio::test]
