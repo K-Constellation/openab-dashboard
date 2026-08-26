@@ -1169,12 +1169,14 @@
         }
 
         function renderSessionPanel(panel, s) {
-            let html = `<span class="text-xs font-semibold" style="color: var(--text-primary)">${safeText(s.name)}</span>`;
+            let html = '';
             if (s.status === 'active') {
+                html += `<span class="text-xs font-semibold" style="color: var(--text-primary)">${safeText(s.name)}</span>`;
                 html += '<span class="health-dot blinking-red"></span>';
                 html += '<button class="theme-select text-xs" onclick="doPause()">Pause</button>';
                 html += '<button class="theme-select text-xs" style="background: #ef4444; color: #fff" onclick="showArchiveModal()">Archive</button>';
             } else if (s.status === 'paused') {
+                html += `<span class="text-xs font-semibold" style="color: var(--text-primary)">${safeText(s.name)}</span>`;
                 html += '<span class="health-dot unhealthy"></span>';
                 html += '<button class="theme-select text-xs" onclick="doResume()">Resume</button>';
                 html += '<button class="theme-select text-xs" style="background: #ef4444; color: #fff" onclick="showArchiveModal()">Archive</button>';
