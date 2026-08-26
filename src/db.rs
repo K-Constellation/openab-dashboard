@@ -725,7 +725,7 @@ impl Database {
              FROM recording_session_pod_snapshots
              WHERE id IN (
                  SELECT MAX(id) FROM recording_session_pod_snapshots
-                 WHERE session_id = ?1 GROUP BY pod
+                 WHERE session_id = ?1 GROUP BY pod, provider
              )"
         )?;
         let rows = stmt.query_map(params![session_id], |row| {
@@ -927,6 +927,71 @@ mod tests {
         let snapshots = db.get_pod_snapshots_for_session(session_id).unwrap();
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].uptime, Some("2h".to_string()));
+    }
+
+    #[test]
+    fn pod_snapshots_grouped_by_pod_and_provider() {
+        let db = in_mem_db();
+        let session_id = db.create_recording_session("recording").unwrap();
+
+        let older = Utc::now() - chrono::Duration::hours(1);
+        let newer = Utc::now();
+
+        let s1 = SessionPodSnapshot {
+            id: 0,
+            session_id,
+            pod: "masami".into(),
+            provider: "kiro".into(),
+            deployment: "kiro-deployment".into(),
+            timestamp: older,
+            status: "enabled".into(),
+            uptime: Some("1h".into()),
+            restarts: 0,
+            version: None,
+            last_active: None,
+            avg_response_ms: 100,
+        };
+        let s2 = SessionPodSnapshot {
+            id: 0,
+            session_id,
+            pod: "masami".into(),
+            provider: "chloe".into(),
+            deployment: "chloe-deployment".into(),
+            timestamp: older,
+            status: "enabled".into(),
+            uptime: Some("30m".into()),
+            restarts: 0,
+            version: None,
+            last_active: None,
+            avg_response_ms: 200,
+        };
+        let s3 = SessionPodSnapshot {
+            id: 0,
+            session_id,
+            pod: "masami".into(),
+            provider: "kiro".into(),
+            deployment: "kiro-deployment".into(),
+            timestamp: newer,
+            status: "enabled".into(),
+            uptime: Some("2h".into()),
+            restarts: 0,
+            version: None,
+            last_active: None,
+            avg_response_ms: 110,
+        };
+
+        db.insert_pod_snapshot(&s1).unwrap();
+        db.insert_pod_snapshot(&s2).unwrap();
+        db.insert_pod_snapshot(&s3).unwrap();
+
+        let snapshots = db.get_pod_snapshots_for_session(session_id).unwrap();
+        // same pod, two providers -> two rows, each returning the newest id
+        assert_eq!(snapshots.len(), 2);
+
+        let kiro = snapshots.iter().find(|s| s.provider == "kiro").unwrap();
+        let chloe = snapshots.iter().find(|s| s.provider == "chloe").unwrap();
+        assert_eq!(kiro.uptime, Some("2h".to_string()));
+        assert_eq!(chloe.uptime, Some("30m".to_string()));
     }
 
     #[test]

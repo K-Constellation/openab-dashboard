@@ -1027,8 +1027,8 @@
             loadResponseTimeChart();
         }
 
-        // Initial load
-        (async function init() {
+        // Initial load (triggered by session manager once session state is known)
+        window.initDashboard = async function() {
             try {
                 await loadChart();
                 await refreshAll();
@@ -1036,7 +1036,7 @@
                 document.body.insertAdjacentHTML('afterbegin',
                     '<div style="background:red;color:white;padding:10px;position:fixed;top:0;left:0;right:0;z-index:9999">JS Error: ' + e.message + '</div>');
             }
-        })();
+        };
 
         // Re-render chart with current theme colors
         function updateChartColors() {
@@ -1142,7 +1142,7 @@
                 // Active/paused/archived session view
                 days.classList.add('hidden');
                 period.classList.add('hidden');
-                healthText.textContent = safeText(s.name) + ' • ' + s.status;
+                healthText.textContent = s.name + ' • ' + s.status;
                 if (s.status === 'active') healthDot.className = 'health-dot unhealthy blinking-red';
                 else if (s.status === 'paused') healthDot.className = 'health-dot unhealthy';
                 else healthDot.className = 'health-dot healthy';
@@ -1174,6 +1174,10 @@
             } else if (s.status === 'archived') {
                 html += '<span class="text-xs" style="color: var(--text-secondary)">archived</span>';
                 html += '<button class="theme-select text-xs" style="background: #ef4444; color: #fff" onclick="showDeleteModal()">Delete</button>';
+            }
+            const err = window.openabSession.error;
+            if (err) {
+                html += `<span class="text-xs" style="color: #ef4444; margin-left: 4px;">${safeText(err)}</span>`;
             }
             panel.innerHTML = html;
         }
@@ -1293,25 +1297,45 @@
         async function doPause() {
             const s = window.openabSession.current;
             if (!s || s.status !== 'active') return;
+            window.openabSession.error = null;
+            renderSessionUI();
             try {
                 const res = await fetch(`/api/recording-sessions/${s.id}/pause`, { method: 'POST' });
                 if (res.ok) {
                     await loadSessionState();
                     refreshAll();
+                } else {
+                    const text = await res.text();
+                    window.openabSession.error = text || `Error ${res.status}`;
+                    renderSessionUI();
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                window.openabSession.error = 'Network error.';
+                renderSessionUI();
+                console.error(e);
+            }
         }
 
         async function doResume() {
             const s = window.openabSession.current;
             if (!s || s.status !== 'paused') return;
+            window.openabSession.error = null;
+            renderSessionUI();
             try {
                 const res = await fetch(`/api/recording-sessions/${s.id}/resume`, { method: 'POST' });
                 if (res.ok) {
                     await loadSessionState();
                     refreshAll();
+                } else {
+                    const text = await res.text();
+                    window.openabSession.error = text || `Error ${res.status}`;
+                    renderSessionUI();
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                window.openabSession.error = 'Network error.';
+                renderSessionUI();
+                console.error(e);
+            }
         }
 
         // ===== Session-aware fetch overrides =====
@@ -1401,7 +1425,12 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             loadSessionState().then(() => {
-                if (window.openabSession.current) refreshAll();
+                renderSessionUI();
+                if (window.openabSession.current) {
+                    refreshAll();
+                } else {
+                    window.initDashboard();
+                }
             });
         });
         setInterval(loadSessionState, 60000);
