@@ -1,9 +1,9 @@
 use axum::{
     Router,
-    extract::{Query, State},
-    http::StatusCode,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json},
-    routing::get,
+    routing::{delete, get, post},
 };
 use rust_embed::Embed;
 use std::sync::Arc;
@@ -16,8 +16,8 @@ use serde::Deserialize;
 #[folder = "static/"]
 struct StaticAssets;
 
-pub async fn start(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
-    let app = Router::new()
+pub fn build_app(state: Arc<AppState>) -> Router {
+    Router::new()
         .route("/", get(index))
         .route("/api/summary", get(api_summary))
         .route("/api/quota", get(api_quota))
@@ -25,9 +25,18 @@ pub async fn start(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
         .route("/api/health", get(api_health))
         .route("/api/response-time", get(api_response_time))
         .route("/api/pods", get(api_pods))
+        .route("/api/recording-sessions", get(list_sessions).post(create_session))
+        .route("/api/recording-sessions/open", get(get_open_session))
+        .route("/api/recording-sessions/:id/pause", post(pause_session))
+        .route("/api/recording-sessions/:id/resume", post(resume_session))
+        .route("/api/recording-sessions/:id/archive", post(archive_session))
+        .route("/api/recording-sessions/:id", delete(delete_session))
         .route("/static/*path", get(static_handler))
-        .with_state(state);
+        .with_state(state)
+}
 
+pub async fn start(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
+    let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -58,15 +67,20 @@ struct SummaryParams {
     days: Option<i64>,
     agent: Option<String>,
     provider: Option<String>,
+    session_id: Option<i64>,
 }
 
 async fn api_summary(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SummaryParams>,
 ) -> Json<SummaryResponse> {
-    let days = params.days.unwrap_or(14);
     let db = &state.db;
-    let summaries = db.get_daily_summary(days).unwrap_or_default();
+
+    let summaries = if let Some(session_id) = params.session_id {
+        db.get_daily_summary_for_session_unbounded(session_id).unwrap_or_default()
+    } else {
+        db.get_daily_summary(params.days.unwrap_or(14)).unwrap_or_default()
+    };
 
     // Group by date
     let mut daily_map: std::collections::BTreeMap<String, Vec<AgentDailyData>> = std::collections::BTreeMap::new();
@@ -91,7 +105,12 @@ async fn api_summary(
         .collect();
 
     let end = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let start = (chrono::Utc::now() - chrono::Duration::days(days)).format("%Y-%m-%d").to_string();
+    let start = if let Some(_session_id) = params.session_id {
+        daily.first().map(|d| d.date.clone()).unwrap_or(end.clone())
+    } else {
+        let days = params.days.unwrap_or(14);
+        (chrono::Utc::now() - chrono::Duration::days(days)).format("%Y-%m-%d").to_string()
+    };
 
     Json(SummaryResponse {
         period: Period { start, end },
@@ -129,6 +148,7 @@ async fn api_quota(State(state): State<Arc<AppState>>) -> Json<QuotaResponse> {
 struct LeaderboardParams {
     period: Option<String>,
     metric: Option<String>,
+    session_id: Option<i64>,
 }
 
 async fn api_leaderboard(
@@ -137,34 +157,49 @@ async fn api_leaderboard(
 ) -> Json<LeaderboardResponse> {
     let period = params.period.unwrap_or_else(|| "month".into());
     let metric = params.metric.unwrap_or_else(|| "tokens".into());
-    let days: i64 = match period.as_str() {
-        "today" => 1,
-        "week" => 7,
-        _ => 30,
-    };
 
     let db = &state.db;
-    let summaries = db.get_daily_summary(days).unwrap_or_default();
 
-    // Aggregate by agent
-    let mut agent_totals: std::collections::HashMap<String, (String, f64, i64, i64)> = std::collections::HashMap::new();
-    for s in summaries {
-        let entry = agent_totals.entry(s.agent.clone()).or_insert((s.provider.clone(), 0.0, 0, 0));
-        entry.1 += s.total_credits;
-        entry.2 += s.total_tokens;
-        entry.3 += s.request_count;
-    }
+    let mut ranking: Vec<RankEntry> = if let Some(session_id) = params.session_id {
+        let rows = db.get_leaderboard_for_session(session_id).unwrap_or_default();
+        rows.into_iter()
+            .map(|(agent, provider, credits, tokens, requests)| {
+                let value = match metric.as_str() {
+                    "credits" => if credits > 0.0 { Some(credits) } else { None },
+                    "requests" => Some(requests as f64),
+                    _ => Some(tokens as f64),
+                };
+                RankEntry { rank: 0, agent, provider, value, requests, tokens }
+            })
+            .collect()
+    } else {
+        let days: i64 = match period.as_str() {
+            "today" => 1,
+            "week" => 7,
+            _ => 30,
+        };
+        let summaries = db.get_daily_summary(days).unwrap_or_default();
 
-    let mut ranking: Vec<RankEntry> = agent_totals.into_iter()
-        .map(|(agent, (provider, credits, tokens, requests))| {
-            let value = match metric.as_str() {
-                "credits" => if credits > 0.0 { Some(credits) } else { None },
-                "requests" => Some(requests as f64),
-                _ => Some(tokens as f64),
-            };
-            RankEntry { rank: 0, agent, provider, value, requests, tokens }
-        })
-        .collect();
+        // Aggregate by agent
+        let mut agent_totals: std::collections::HashMap<String, (String, f64, i64, i64)> = std::collections::HashMap::new();
+        for s in summaries {
+            let entry = agent_totals.entry(s.agent.clone()).or_insert((s.provider.clone(), 0.0, 0, 0));
+            entry.1 += s.total_credits;
+            entry.2 += s.total_tokens;
+            entry.3 += s.request_count;
+        }
+
+        agent_totals.into_iter()
+            .map(|(agent, (provider, credits, tokens, requests))| {
+                let value = match metric.as_str() {
+                    "credits" => if credits > 0.0 { Some(credits) } else { None },
+                    "requests" => Some(requests as f64),
+                    _ => Some(tokens as f64),
+                };
+                RankEntry { rank: 0, agent, provider, value, requests, tokens }
+            })
+            .collect()
+    };
 
     // Sort by value descending
     ranking.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
@@ -202,15 +237,20 @@ async fn api_health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> 
 #[derive(Deserialize)]
 struct ResponseTimeParams {
     days: Option<i64>,
+    session_id: Option<i64>,
 }
 
 async fn api_response_time(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ResponseTimeParams>,
 ) -> Json<serde_json::Value> {
-    let days = params.days.unwrap_or(14);
     let db = &state.db;
-    let data = db.get_avg_duration_by_agent(days).unwrap_or_default();
+
+    let data = if let Some(session_id) = params.session_id {
+        db.get_avg_duration_for_session_unbounded(session_id).unwrap_or_default()
+    } else {
+        db.get_avg_duration_by_agent(params.days.unwrap_or(14)).unwrap_or_default()
+    };
 
     // Group by date, with agents as series
     let mut daily_map: std::collections::BTreeMap<String, std::collections::HashMap<String, f64>> = std::collections::BTreeMap::new();
@@ -235,7 +275,19 @@ async fn api_response_time(
     }))
 }
 
-async fn api_pods(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+#[derive(Deserialize)]
+struct PodsParams {
+    session_id: Option<i64>,
+}
+
+async fn api_pods(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PodsParams>,
+) -> Json<serde_json::Value> {
+    if let Some(session_id) = params.session_id {
+        return Json(session_pods(&state.db, session_id));
+    }
+
     let config = &state.config;
     let mut pods = vec![];
 
@@ -269,6 +321,117 @@ async fn api_pods(State(state): State<Arc<AppState>>) -> Json<serde_json::Value>
     }
 
     Json(serde_json::json!({ "pods": pods }))
+}
+
+fn session_pods(db: &crate::db::Database, session_id: i64) -> serde_json::Value {
+    let snapshots = db.get_pod_snapshots_for_session(session_id).unwrap_or_default();
+    let pods: Vec<serde_json::Value> = snapshots.into_iter().map(|s| {
+        serde_json::json!({
+            "name": s.pod,
+            "provider": s.provider,
+            "deployment": s.deployment,
+            "status": s.status,
+            "uptime": s.uptime,
+            "restarts": s.restarts,
+            "version": s.version,
+            "last_active": s.last_active,
+            "avg_response_ms": s.avg_response_ms,
+        })
+    }).collect();
+    serde_json::json!({ "pods": pods })
+}
+
+async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Vec<RecordingSession>> {
+    Json(state.db.list_recording_sessions().unwrap_or_default())
+}
+
+async fn get_open_session(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.db.get_open_recording_session() {
+        Ok(Some(s)) => Json(s).into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateSession {
+    name: String,
+}
+
+async fn create_session(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateSession>,
+) -> Result<(StatusCode, Json<RecordingSession>), (StatusCode, String)> {
+    let name = payload.name.trim();
+    if name.is_empty() || name.len() > 80 {
+        return Err((StatusCode::BAD_REQUEST, "session name must be non-empty and at most 80 characters".into()));
+    }
+    let id = state.db.create_recording_session(&payload.name)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let session = state.db.get_recording_session_by_id(id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "session not found".into()))?;
+    Ok((StatusCode::CREATED, Json(session)))
+}
+
+fn require_json_content_type(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
+    match headers.get("content-type").and_then(|v| v.to_str().ok()) {
+        Some(ct) if ct.split(';').next().map(|s| s.trim() == "application/json").unwrap_or(false) => Ok(()),
+        _ => Err((StatusCode::UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json".into())),
+    }
+}
+
+async fn pause_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Result<Json<RecordingSession>, (StatusCode, String)> {
+    require_json_content_type(&headers)?;
+    state.db.pause_recording_session(id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let session = state.db.get_recording_session_by_id(id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "session not found".into()))?;
+    Ok(Json(session))
+}
+
+async fn resume_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Result<Json<RecordingSession>, (StatusCode, String)> {
+    require_json_content_type(&headers)?;
+    state.db.resume_recording_session(id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let session = state.db.get_recording_session_by_id(id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "session not found".into()))?;
+    Ok(Json(session))
+}
+
+async fn archive_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Result<Json<RecordingSession>, (StatusCode, String)> {
+    require_json_content_type(&headers)?;
+    state.db.archive_recording_session(id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let session = state.db.get_recording_session_by_id(id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "session not found".into()))?;
+    Ok(Json(session))
+}
+
+async fn delete_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Result<StatusCode, (StatusCode, String)> {
+    require_json_content_type(&headers)?;
+    state.db.delete_recording_session(id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 struct LivePodInfo {
@@ -316,4 +479,246 @@ async fn get_live_pod_info(kubectl: &str) -> Vec<LivePodInfo> {
     }).collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, DatabaseConfig, ServerConfig, CollectorConfig, ProvidersConfig};
+    use crate::db::Database;
+    use crate::models::UsageRecord;
+    use chrono::Utc;
 
+    async fn test_server() -> (u16, reqwest::Client) {
+        let db = Database::new(":memory:").unwrap();
+        db.initialize().unwrap();
+
+        let config = Config {
+            database: DatabaseConfig { path: ":memory:".into() },
+            server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
+            collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+            providers: ProvidersConfig { providers: std::collections::HashMap::new() },
+        };
+        let state = Arc::new(AppState { db, config });
+        let app = build_app(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        (port, client)
+    }
+
+    #[tokio::test]
+    async fn api_summary_baseline_vs_session() {
+        // Baseline event, not associated with any session
+        let baseline_record = UsageRecord {
+            timestamp: Utc::now() - chrono::Duration::hours(1),
+            agent: "baseline".into(),
+            provider: "kiro".into(),
+            ..Default::default()
+        };
+
+        // We need a state handle to insert data, but the db moved into AppState.
+        // Seed data before building the app.
+        let (port2, client2, session_id) = {
+            let db = Database::new(":memory:").unwrap();
+            db.initialize().unwrap();
+
+            db.insert_usage_event(&baseline_record, "kiro:user").unwrap();
+
+            let session_id = db.create_recording_session("rec").unwrap();
+            let in_session = UsageRecord {
+                timestamp: Utc::now(),
+                agent: "insession".into(),
+                provider: "kiro".into(),
+                ..Default::default()
+            };
+            db.insert_usage_event(&in_session, "kiro:user").unwrap();
+
+            let config = Config {
+                database: DatabaseConfig { path: ":memory:".into() },
+                server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
+                collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+                providers: ProvidersConfig { providers: std::collections::HashMap::new() },
+            };
+            let state = Arc::new(AppState { db, config });
+            let app = build_app(state);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+
+            (port, reqwest::Client::new(), session_id)
+        };
+
+        let base: serde_json::Value = client2
+            .get(format!("http://127.0.0.1:{}/api/summary?days=1", port2))
+            .send().await.unwrap()
+            .json().await.unwrap();
+        let base_requests: i64 = base["daily"].as_array().unwrap().iter()
+            .flat_map(|d| d["agents"].as_array().into_iter().flatten())
+            .map(|a| a["requests"].as_i64().unwrap())
+            .sum();
+        assert_eq!(base_requests, 2);
+
+        let session: serde_json::Value = client2
+            .get(format!("http://127.0.0.1:{}/api/summary?days=1&session_id={}", port2, session_id))
+            .send().await.unwrap()
+            .json().await.unwrap();
+        let session_requests: i64 = session["daily"].as_array().unwrap().iter()
+            .flat_map(|d| d["agents"].as_array().into_iter().flatten())
+            .map(|a| a["requests"].as_i64().unwrap())
+            .sum();
+        assert_eq!(session_requests, 1);
+    }
+
+    #[tokio::test]
+    async fn recording_session_lifecycle_boundary() {
+        let (port, client) = test_server().await;
+
+        // Empty name -> 400
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions", port))
+            .json(&serde_json::json!({ "name": "" }))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 400);
+
+        // Valid name -> 201
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions", port))
+            .json(&serde_json::json!({ "name": "good" }))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 201);
+
+        // Duplicate / open session exists -> 400
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions", port))
+            .json(&serde_json::json!({ "name": "good" }))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 400);
+
+        // Delete unarchived -> 400
+        let r = client
+            .delete(format!("http://127.0.0.1:{}/api/recording-sessions/1", port))
+            .header("content-type", "application/json")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 400);
+    }
+
+    #[tokio::test]
+    async fn recording_session_lifecycle_requires_json_content_type() {
+        let (port, client) = test_server().await;
+
+        // Create a session with JSON content type
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions", port))
+            .json(&serde_json::json!({ "name": "csrf-test" }))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 201);
+        let session: RecordingSession = r.json().await.unwrap();
+        assert_eq!(session.status, RecordingSessionStatus::Active);
+
+        // Pause without Content-Type -> 415, status unchanged
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions/{}/pause", port, session.id))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 415);
+        let current: RecordingSession = client
+            .get(format!("http://127.0.0.1:{}/api/recording-sessions/open", port))
+            .send().await.unwrap()
+            .json().await.unwrap();
+        assert_eq!(current.status, RecordingSessionStatus::Active);
+
+        // Pause with form content type -> 415, status unchanged
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions/{}/pause", port, session.id))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 415);
+
+        // Pause with JSON; charset -> 200 and status paused
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions/{}/pause", port, session.id))
+            .header("content-type", "application/json; charset=utf-8")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 200);
+        let current: RecordingSession = client
+            .get(format!("http://127.0.0.1:{}/api/recording-sessions/open", port))
+            .send().await.unwrap()
+            .json().await.unwrap();
+        assert_eq!(current.status, RecordingSessionStatus::Paused);
+
+        // Archive with JSON -> 200 and archived
+        let r = client
+            .post(format!("http://127.0.0.1:{}/api/recording-sessions/{}/archive", port, session.id))
+            .header("content-type", "application/json")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 200);
+        let archived: RecordingSession = r.json().await.unwrap();
+        assert_eq!(archived.status, RecordingSessionStatus::Archived);
+
+        // Delete with form content type -> 415
+        let r = client
+            .delete(format!("http://127.0.0.1:{}/api/recording-sessions/{}", port, session.id))
+            .header("content-type", "multipart/form-data")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 415);
+
+        // Delete with JSON -> 204
+        let r = client
+            .delete(format!("http://127.0.0.1:{}/api/recording-sessions/{}", port, session.id))
+            .header("content-type", "application/json")
+            .send().await.unwrap();
+        assert_eq!(r.status(), 204);
+    }
+
+    #[tokio::test]
+    async fn api_summary_ignores_days_when_session_id_present() {
+        let (port2, client2, session_id) = {
+            let db = Database::new(":memory:").unwrap();
+            db.initialize().unwrap();
+
+            let session_id = db.create_recording_session("prod-reg").unwrap();
+
+            // A single in-session event right now
+            let event = UsageRecord {
+                timestamp: Utc::now(),
+                agent: "reg-agent".into(),
+                provider: "kiro".into(),
+                ..Default::default()
+            };
+            db.insert_usage_event(&event, "kiro:user").unwrap();
+
+            let config = Config {
+                database: DatabaseConfig { path: ":memory:".into() },
+                server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
+                collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+                providers: ProvidersConfig { providers: std::collections::HashMap::new() },
+            };
+            let state = Arc::new(AppState { db, config });
+            let app = build_app(state);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+
+            (port, reqwest::Client::new(), session_id)
+        };
+
+        // days=0 would exclude the event if the days filter were applied to the session.
+        let summary: serde_json::Value = client2
+            .get(format!("http://127.0.0.1:{}/api/summary?days=0&session_id={}", port2, session_id))
+            .send().await.unwrap()
+            .json().await.unwrap();
+
+        let total: i64 = summary["daily"].as_array().unwrap().iter()
+            .flat_map(|d| d["agents"].as_array().into_iter().flatten())
+            .map(|a| a["requests"].as_i64().unwrap())
+            .sum();
+        // Session-scoped query must ignore the days parameter and return all session data.
+        assert_eq!(total, 1);
+    }
+}
