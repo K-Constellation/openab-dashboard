@@ -330,6 +330,27 @@
             0% { background-position: 200% 0; }
             100% { background-position: -200% 0; }
         }
+
+        .hidden { display: none !important; }
+
+        @keyframes blink-red {
+            0%, 100% { opacity: 1; box-shadow: 0 0 6px #ef4444; }
+            50% { opacity: 0.3; box-shadow: 0 0 2px #ef4444; }
+        }
+        .blinking-red {
+            background: #ef4444 !important;
+            animation: blink-red 1s infinite;
+        }
+
+        .modal-backdrop {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 50;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .modal {
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 1.5rem; max-width: 420px; width: 90%;
+            box-shadow: var(--shadow);
+        }
     </style>
 </head>
 <body class="p-4 md:p-6 lg:p-8">
@@ -358,6 +379,7 @@
                     <option value="terminal">💻 Terminal Green</option>
                     <option value="ocean">🌊 Deep Ocean</option>
                 </select>
+                <div id="session-panel" class="flex items-center gap-2"></div>
                 <span id="last-refresh" class="text-xs hidden sm:inline" style="color: var(--text-secondary)"></span>
             </div>
         </header>
@@ -438,6 +460,44 @@
         <footer class="mt-8 text-center text-xs" style="color: var(--text-secondary)">
             OpenAB Dashboard • Auto-refreshes every 60s
         </footer>
+    </div>
+
+    <!-- Modals -->
+    <div id="new-session-modal" class="modal-backdrop hidden" onclick="if(event.target===this) closeNewSessionModal()">
+        <div class="modal" onclick="event.stopPropagation()">
+            <h3 class="text-lg font-semibold mb-3" style="font-family: var(--font-display)">New Recording Session</h3>
+            <label class="text-sm block mb-1" style="color: var(--text-secondary)">Session name *</label>
+            <input id="new-session-name" type="text" class="theme-select w-full mb-2" maxlength="80" placeholder="e.g. masami-demo" autocomplete="off">
+            <p id="new-session-error" class="text-xs mb-3 hidden" style="color: #ef4444"></p>
+            <div class="flex justify-end gap-2">
+                <button class="theme-select" onclick="closeNewSessionModal()">Cancel</button>
+                <button class="theme-select" style="background: var(--accent-1); color: var(--bg-primary)" onclick="submitNewSession()">Start Recording</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="archive-confirm-modal" class="modal-backdrop hidden" onclick="if(event.target===this) closeArchiveModal()">
+        <div class="modal" onclick="event.stopPropagation()">
+            <h3 class="text-lg font-semibold mb-3" style="font-family: var(--font-display)">Archive Session?</h3>
+            <p class="text-sm mb-4" style="color: var(--text-secondary)">Archiving is irreversible. The session will become read-only and only deletion will be available.</p>
+            <p id="archive-error" class="text-xs mb-3 hidden" style="color: #ef4444"></p>
+            <div class="flex justify-end gap-2">
+                <button class="theme-select" onclick="closeArchiveModal()">Cancel</button>
+                <button class="theme-select" style="background: #ef4444; color: #fff" onclick="doArchive()">Archive</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="delete-confirm-modal" class="modal-backdrop hidden" onclick="if(event.target===this) closeDeleteModal()">
+        <div class="modal" onclick="event.stopPropagation()">
+            <h3 class="text-lg font-semibold mb-3" style="font-family: var(--font-display)">Delete Session?</h3>
+            <p class="text-sm mb-4" style="color: var(--text-secondary)">This will permanently delete the archived session and all associated data. This action cannot be undone.</p>
+            <p id="delete-error" class="text-xs mb-3 hidden" style="color: #ef4444"></p>
+            <div class="flex justify-end gap-2">
+                <button class="theme-select" onclick="closeDeleteModal()">Cancel</button>
+                <button class="theme-select" style="background: #ef4444; color: #fff" onclick="doDelete()">Delete</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -1000,6 +1060,270 @@
             });
         });
         observer.observe(document.documentElement, { attributes: true });
+    </script>
+
+    <script>
+        // ===== Recording Session State & Lifecycle =====
+        window.openabSession = {
+            sessions: [],
+            current: null,
+            error: null
+        };
+
+        // Intercept fetch to attach session_id when a session is active/selected
+        const baseFetch = window.fetch;
+        window.fetch = async function(input, init) {
+            if (typeof input === 'string' && input.startsWith('/api/')) {
+                const s = window.openabSession.current;
+                if (s) {
+                    const skip = input === '/api/recording-sessions' ||
+                                 input.startsWith('/api/recording-sessions/') ||
+                                 input === '/api/health' ||
+                                 input.includes('session_id=');
+                    if (!skip) {
+                        const sep = input.includes('?') ? '&' : '?';
+                        input = input + sep + 'session_id=' + encodeURIComponent(s.id);
+                    }
+                }
+            }
+            return baseFetch(input, init);
+        };
+
+        async function loadSessionState() {
+            try {
+                const [listRes, openRes] = await Promise.all([
+                    fetch('/api/recording-sessions'),
+                    fetch('/api/recording-sessions/open')
+                ]);
+                let sessions = [];
+                if (listRes.ok) sessions = await listRes.json();
+
+                let current = window.openabSession.current;
+                if (openRes.status === 200) {
+                    current = await openRes.json(); // authoritative
+                } else if (current) {
+                    const found = sessions.find(s => s.id === current.id);
+                    if (found) current = found;
+                    else current = null;
+                } else {
+                    current = null;
+                }
+
+                window.openabSession.sessions = sessions;
+                window.openabSession.current = current;
+                renderSessionUI();
+            } catch (e) {
+                console.error('Failed to load session state:', e);
+            }
+        }
+
+        function safeText(str) {
+            return (str || '').replace(/[<>&]/g, function(c) {
+                return ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]);
+            });
+        }
+
+        function renderSessionUI() {
+            const s = window.openabSession.current;
+            const days = document.getElementById('days-selector');
+            const period = document.getElementById('leaderboard-period');
+            const healthDot = document.querySelector('#health-indicator .health-dot');
+            const healthText = document.getElementById('health-text');
+            const panel = document.getElementById('session-panel');
+
+            if (!s) {
+                // Baseline view
+                days.classList.remove('hidden');
+                period.classList.remove('hidden');
+                healthDot.className = 'health-dot healthy';
+                healthText.textContent = 'healthy';
+                renderBaselinePanel(panel);
+            } else {
+                // Active/paused/archived session view
+                days.value = '365';
+                days.classList.add('hidden');
+                period.classList.add('hidden');
+                healthText.textContent = safeText(s.name) + ' • ' + s.status;
+                if (s.status === 'active') healthDot.className = 'health-dot unhealthy blinking-red';
+                else if (s.status === 'paused') healthDot.className = 'health-dot unhealthy';
+                else healthDot.className = 'health-dot healthy';
+                renderSessionPanel(panel, s);
+            }
+        }
+
+        function renderBaselinePanel(panel) {
+            const sessions = window.openabSession.sessions;
+            let html = '<select id="session-selector" class="theme-select text-xs" onchange="onSessionSelect(this.value)"><option value="">Baseline</option>';
+            sessions.forEach(s => {
+                html += `<option value="${s.id}">${safeText(s.name)} (${s.status})</option>`;
+            });
+            html += '</select>';
+            html += '<button class="theme-select text-xs" style="background: var(--accent-4); color: var(--bg-primary)" onclick="showNewSessionModal()">+ New Recording</button>';
+            panel.innerHTML = html;
+        }
+
+        function renderSessionPanel(panel, s) {
+            let html = `<span class="text-xs font-semibold" style="color: var(--text-primary)">${safeText(s.name)}</span>`;
+            if (s.status === 'active') {
+                html += '<span class="health-dot blinking-red"></span>';
+                html += '<button class="theme-select text-xs" onclick="doPause()">Pause</button>';
+                html += '<button class="theme-select text-xs" style="background: #ef4444; color: #fff" onclick="showArchiveModal()">Archive</button>';
+            } else if (s.status === 'paused') {
+                html += '<span class="health-dot unhealthy"></span>';
+                html += '<button class="theme-select text-xs" onclick="doResume()">Resume</button>';
+                html += '<button class="theme-select text-xs" style="background: #ef4444; color: #fff" onclick="showArchiveModal()">Archive</button>';
+            } else if (s.status === 'archived') {
+                html += '<span class="text-xs" style="color: var(--text-secondary)">archived</span>';
+                html += '<button class="theme-select text-xs" style="background: #ef4444; color: #fff" onclick="showDeleteModal()">Delete</button>';
+            }
+            panel.innerHTML = html;
+        }
+
+        function onSessionSelect(value) {
+            const id = parseInt(value, 10) || null;
+            if (!id) {
+                window.openabSession.current = null;
+                document.getElementById('days-selector').value = '14';
+            } else {
+                const found = window.openabSession.sessions.find(s => s.id === id);
+                if (found) {
+                    window.openabSession.current = found;
+                    document.getElementById('days-selector').value = '365';
+                }
+            }
+            refreshAll();
+            renderSessionUI();
+        }
+
+        function showNewSessionModal() {
+            document.getElementById('new-session-modal').classList.remove('hidden');
+            document.getElementById('new-session-name').value = '';
+            document.getElementById('new-session-error').classList.add('hidden');
+        }
+        function closeNewSessionModal() {
+            document.getElementById('new-session-modal').classList.add('hidden');
+        }
+
+        async function submitNewSession() {
+            const input = document.getElementById('new-session-name');
+            const name = input.value.trim();
+            const err = document.getElementById('new-session-error');
+            if (!name) {
+                err.textContent = 'Session name is required.';
+                err.classList.remove('hidden');
+                return;
+            }
+            try {
+                const res = await fetch('/api/recording-sessions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                if (!res.ok) {
+                    const data = await res.text();
+                    err.textContent = data || 'Error ' + res.status;
+                    err.classList.remove('hidden');
+                    return;
+                }
+                closeNewSessionModal();
+                await loadSessionState();
+                refreshAll();
+            } catch (e) {
+                err.textContent = 'Network error.';
+                err.classList.remove('hidden');
+            }
+        }
+
+        function showArchiveModal() {
+            document.getElementById('archive-confirm-modal').classList.remove('hidden');
+            document.getElementById('archive-error').classList.add('hidden');
+        }
+        function closeArchiveModal() {
+            document.getElementById('archive-confirm-modal').classList.add('hidden');
+        }
+
+        async function doArchive() {
+            const s = window.openabSession.current;
+            if (!s) return;
+            const err = document.getElementById('archive-error');
+            try {
+                const res = await fetch(`/api/recording-sessions/${s.id}/archive`, { method: 'POST' });
+                if (!res.ok) {
+                    const text = await res.text();
+                    err.textContent = text || 'Error ' + res.status;
+                    err.classList.remove('hidden');
+                    return;
+                }
+                closeArchiveModal();
+                await loadSessionState();
+                refreshAll();
+            } catch (e) {
+                err.textContent = 'Network error.';
+                err.classList.remove('hidden');
+            }
+        }
+
+        function showDeleteModal() {
+            document.getElementById('delete-confirm-modal').classList.remove('hidden');
+            document.getElementById('delete-error').classList.add('hidden');
+        }
+        function closeDeleteModal() {
+            document.getElementById('delete-confirm-modal').classList.add('hidden');
+        }
+
+        async function doDelete() {
+            const s = window.openabSession.current;
+            if (!s) return;
+            const err = document.getElementById('delete-error');
+            try {
+                const res = await fetch(`/api/recording-sessions/${s.id}`, { method: 'DELETE' });
+                if (!res.ok) {
+                    const text = await res.text();
+                    err.textContent = text || 'Error ' + res.status;
+                    err.classList.remove('hidden');
+                    return;
+                }
+                closeDeleteModal();
+                window.openabSession.current = null;
+                document.getElementById('days-selector').value = '14';
+                await loadSessionState();
+                refreshAll();
+            } catch (e) {
+                err.textContent = 'Network error.';
+                err.classList.remove('hidden');
+            }
+        }
+
+        async function doPause() {
+            const s = window.openabSession.current;
+            if (!s || s.status !== 'active') return;
+            try {
+                const res = await fetch(`/api/recording-sessions/${s.id}/pause`, { method: 'POST' });
+                if (res.ok) {
+                    await loadSessionState();
+                    refreshAll();
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        async function doResume() {
+            const s = window.openabSession.current;
+            if (!s || s.status !== 'paused') return;
+            try {
+                const res = await fetch(`/api/recording-sessions/${s.id}/resume`, { method: 'POST' });
+                if (res.ok) {
+                    await loadSessionState();
+                    refreshAll();
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSessionState().then(() => {
+                if (window.openabSession.current) refreshAll();
+            });
+        });
+        setInterval(loadSessionState, 60000);
     </script>
 </body>
 </html>
