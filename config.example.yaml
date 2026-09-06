@@ -11,6 +11,9 @@ server:
 collector:
   interval_seconds: 300        # Collect every 5 minutes
   kubectl_path: "/usr/local/bin/kubectl"
+  # auto: import pod-local Devin DBs only on a recognised local cluster.
+  # local: force local DB ingestion on an unknown cluster; disabled: turn it off.
+  devin_session_db_mode: auto
 
 # Providers are generic — add any ACP-compatible CLI agent here.
 # The collector parses `tokens_per_event` and `agent_dispatch_ms` from dispatch logs.
@@ -32,6 +35,17 @@ providers:
         deployment: openab-my-agy
         account_id: "agy:user@example.com"
         oauth_token_path: "/home/agent/.gemini/antigravity-cli/antigravity-oauth-token"  # optional
+
+  # Devin ACP. Reads actual per-message model metrics from the pod's local
+  # Devin CLI database, including historical sessions on its first collection.
+  devin:
+    enabled: true
+    pods:
+      - name: orion
+        deployment: openab-orion
+        account_id: "devin:local"
+        container: openab  # optional; this is the default
+        # devin_session_db_path: "/home/node/.local/share/devin/cli/sessions.db"
 
   # OpenCode (open-source, any LLM provider)
   # opencode:

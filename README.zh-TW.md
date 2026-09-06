@@ -168,6 +168,12 @@ providers:
 
 只需在 config.yaml 的 `providers:` 底下加一個 section。不需要修改程式碼。Dashboard 會自動從任何 pod 的 dispatch logs 收集 `tokens_per_event` 和 `agent_dispatch_ms`。
 
+### 本機叢集上的 Devin ACP
+
+使用 `devin` provider 可從各 pod 的 Devin CLI session DB 匯入每一則模型回應所回報的用量。設定 `devin_session_db_mode: auto` 時，collector 只會在 OrbStack、Docker Desktop、minikube、kind 或 k3d 等可辨識的本機叢集執行；雲端和無法辨識的叢集會略過，雲端收集暫不包含在此版本。
+
+第一次執行會匯入舊 session。後續執行會以 Devin 的 session ID 與 message ID 去重，不會重複計算。`total_tokens` 為 input 加 output；cache token 數則保留在 event metadata。
+
 ## API 端點
 
 | 端點 | 說明 |

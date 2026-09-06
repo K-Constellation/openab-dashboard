@@ -1,6 +1,7 @@
 pub mod provider;
 pub mod kiro;
 pub mod antigravity;
+pub mod devin;
 
 use std::sync::Arc;
 use chrono::Utc;
@@ -11,9 +12,28 @@ use tokio::time::{self, Duration};
 
 pub async fn collect_once(state: Arc<AppState>) -> anyhow::Result<()> {
     let config = &state.config;
+    let devin_environment = if config.providers.providers.get("devin").is_some_and(|provider| provider.enabled) {
+        Some(devin::detect_cluster_environment(&config.collector.kubectl_path).await)
+    } else {
+        None
+    };
 
     for (provider_name, provider_config) in &config.providers.providers {
         if !provider_config.enabled {
+            continue;
+        }
+
+        if provider_name == "devin" && !devin::should_collect(
+            &config.collector.devin_session_db_mode,
+            devin_environment.unwrap_or(devin::ClusterEnvironment::Unknown),
+        ) {
+            let environment = devin_environment.unwrap_or(devin::ClusterEnvironment::Unknown);
+            let message = format!(
+                "Devin session DB collection skipped for {} cluster",
+                environment.as_str(),
+            );
+            let _ = state.db.log_collection(provider_name, None, "skipped", Some(&message), 0);
+            tracing::info!("{}", message);
             continue;
         }
 
@@ -76,6 +96,16 @@ async fn collect_provider(
     let mut total_count: i64 = 0;
 
     for pod in &provider_config.pods {
+        if provider_name == "devin" {
+            let records = devin::collect_pod(kubectl, pod, provider_name).await?;
+            for record in records {
+                if state.db.insert_usage_event(&record, &pod.account_id)? > 0 {
+                    total_count += 1;
+                }
+            }
+            continue;
+        }
+
         let logs = get_logs(kubectl, &pod.deployment, "60m").await?;
         let records = parse_dispatch_logs(&logs, &pod.name, provider_name);
         let count = records.len() as i64;

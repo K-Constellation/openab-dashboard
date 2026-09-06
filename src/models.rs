@@ -14,6 +14,8 @@ pub struct UsageRecord {
     pub duration_ms: Option<i64>,
     pub context_usage_pct: Option<f64>,
     pub session_id: Option<String>,
+    /// Provider-native stable identifier, when the provider exposes one.
+    pub provider_event_id: Option<String>,
     pub metadata: Option<serde_json::Value>,
 }
 

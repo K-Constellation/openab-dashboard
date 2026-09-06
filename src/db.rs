@@ -50,6 +50,7 @@ impl Database {
                 timestamp       TEXT NOT NULL,
                 provider        TEXT NOT NULL,
                 model           TEXT,
+                provider_event_id TEXT,
                 input_tokens    INTEGER,
                 output_tokens   INTEGER,
                 total_tokens    INTEGER,
@@ -137,25 +138,47 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_events_agent_time ON usage_events(agent, timestamp);
             CREATE INDEX IF NOT EXISTS idx_quota_account_time ON quota_snapshots(account_id, timestamp);"
         )?;
+        ensure_usage_event_column(&conn, "provider_event_id", "TEXT")?;
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_provider_event
+             ON usage_events(provider, agent, provider_event_id)
+             WHERE provider_event_id IS NOT NULL;"
+        )?;
         Ok(())
     }
 
     pub fn insert_usage_event(&self, record: &UsageRecord, account_id: &str) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
-        // Deduplicate: skip if same agent + timestamp already exists
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM usage_events WHERE agent = ?1 AND timestamp = ?2)",
-            params![record.agent, record.timestamp.to_rfc3339()],
-            |row| row.get(0),
-        ).unwrap_or(false);
+        let exists: bool = if let Some(provider_event_id) = &record.provider_event_id {
+            conn.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM usage_events
+                    WHERE provider = ?1 AND agent = ?2 AND provider_event_id = ?3
+                )",
+                params![record.provider, record.agent, provider_event_id],
+                |row| row.get(0),
+            ).unwrap_or(false)
+        } else {
+            // Legacy providers do not expose an event identifier, so retain the
+            // original timestamp fallback for them.
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM usage_events WHERE agent = ?1 AND timestamp = ?2)",
+                params![record.agent, record.timestamp.to_rfc3339()],
+                |row| row.get(0),
+            ).unwrap_or(false)
+        };
         if exists {
             return Ok(0);
         }
         conn.execute(
-            "INSERT INTO usage_events (account_id, agent, session_id, timestamp, provider, model,
+            "INSERT OR IGNORE INTO accounts (id, provider) VALUES (?1, ?2)",
+            params![account_id, record.provider],
+        )?;
+        conn.execute(
+            "INSERT INTO usage_events (account_id, agent, session_id, timestamp, provider, model, provider_event_id,
              input_tokens, output_tokens, total_tokens, credits_consumed, duration_ms,
              context_usage_pct, metadata)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 account_id,
                 record.agent,
@@ -163,6 +186,7 @@ impl Database {
                 record.timestamp.to_rfc3339(),
                 record.provider,
                 record.model,
+                record.provider_event_id,
                 record.input_tokens,
                 record.output_tokens,
                 record.total_tokens,
@@ -409,7 +433,6 @@ impl Database {
                 COUNT(*),
                 COALESCE(AVG(duration_ms), 0)
             FROM usage_events
-            WHERE date(timestamp) >= date('now', '-1 day')
             GROUP BY date(timestamp), account_id, agent, provider;"
         )?;
         Ok(())
@@ -787,6 +810,16 @@ impl Database {
     }
 }
 
+fn ensure_usage_event_column(conn: &Connection, column: &str, definition: &str) -> Result<()> {
+    let mut statement = conn.prepare("PRAGMA table_info(usage_events)")?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    if columns.filter_map(|column| column.ok()).any(|name| name == column) {
+        return Ok(());
+    }
+    conn.execute_batch(&format!("ALTER TABLE usage_events ADD COLUMN {column} {definition}"))?;
+    Ok(())
+}
+
 fn parse_datetime(idx: usize, s: &str) -> rusqlite::Result<DateTime<Utc>> {
     s.parse().map_err(|e| rusqlite::Error::FromSqlConversionFailure(
         idx, rusqlite::types::Type::Text, Box::new(e),
@@ -823,6 +856,65 @@ mod tests {
             provider: "kiro".into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn provider_event_id_deduplicates_and_creates_its_account() {
+        let db = in_mem_db();
+        let mut event = sample_event(Utc::now(), "orion");
+        event.provider = "devin".into();
+        event.provider_event_id = Some("session-1:message-1".into());
+
+        assert!(db.insert_usage_event(&event, "devin:local").unwrap() > 0);
+        assert_eq!(db.insert_usage_event(&event, "devin:local").unwrap(), 0);
+
+        let conn = db.conn.lock().unwrap();
+        let account_count: i64 = conn.query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0)).unwrap();
+        let event_count: i64 = conn.query_row("SELECT COUNT(*) FROM usage_events", [], |row| row.get(0)).unwrap();
+        assert_eq!(account_count, 1);
+        assert_eq!(event_count, 1);
+    }
+
+    #[test]
+    fn existing_usage_event_table_gains_provider_event_id() {
+        let directory = std::env::temp_dir().join(format!(
+            "openab-dashboard-migration-{}",
+            Utc::now().timestamp_nanos_opt().unwrap(),
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("usage.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE usage_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id TEXT NOT NULL,
+                agent TEXT,
+                session_id TEXT,
+                timestamp TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                total_tokens INTEGER,
+                credits_consumed REAL,
+                duration_ms INTEGER,
+                context_usage_pct REAL,
+                metadata TEXT
+            );"
+        ).unwrap();
+        drop(conn);
+
+        {
+            let db = Database::new(path.to_str().unwrap()).unwrap();
+            db.initialize().unwrap();
+            let conn = db.conn.lock().unwrap();
+            let mut columns = conn.prepare("PRAGMA table_info(usage_events)").unwrap();
+            let names = columns.query_map([], |row| row.get::<_, String>(1)).unwrap()
+                .filter_map(|row| row.ok())
+                .collect::<Vec<_>>();
+            assert!(names.iter().any(|name| name == "provider_event_id"));
+        }
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

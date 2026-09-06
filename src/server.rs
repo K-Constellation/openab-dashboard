@@ -494,7 +494,11 @@ mod tests {
         let config = Config {
             database: DatabaseConfig { path: ":memory:".into() },
             server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
-            collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+            collector: CollectorConfig {
+                interval_seconds: 300,
+                kubectl_path: "/bin/false".into(),
+                devin_session_db_mode: crate::config::DevinSessionDbMode::Auto,
+            },
             providers: ProvidersConfig { providers: std::collections::HashMap::new() },
         };
         let state = Arc::new(AppState { db, config });
@@ -539,7 +543,11 @@ mod tests {
             let config = Config {
                 database: DatabaseConfig { path: ":memory:".into() },
                 server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
-                collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+                collector: CollectorConfig {
+                    interval_seconds: 300,
+                    kubectl_path: "/bin/false".into(),
+                    devin_session_db_mode: crate::config::DevinSessionDbMode::Auto,
+                },
                 providers: ProvidersConfig { providers: std::collections::HashMap::new() },
             };
             let state = Arc::new(AppState { db, config });
@@ -694,7 +702,11 @@ mod tests {
             let config = Config {
                 database: DatabaseConfig { path: ":memory:".into() },
                 server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
-                collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+                collector: CollectorConfig {
+                    interval_seconds: 300,
+                    kubectl_path: "/bin/false".into(),
+                    devin_session_db_mode: crate::config::DevinSessionDbMode::Auto,
+                },
                 providers: ProvidersConfig { providers: std::collections::HashMap::new() },
             };
             let state = Arc::new(AppState { db, config });
