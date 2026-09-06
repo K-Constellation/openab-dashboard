@@ -123,6 +123,8 @@ async fn api_summary(
 struct TokenBreakdownParams {
     days: Option<i64>,
     session_id: Option<i64>,
+    agent: Option<String>,
+    provider: Option<String>,
 }
 
 async fn api_token_breakdown(
@@ -134,7 +136,12 @@ async fn api_token_breakdown(
     } else {
         Some(params.days.unwrap_or(14))
     };
-    Json(state.db.get_token_breakdown(days, params.session_id).unwrap_or(TokenBreakdown {
+    Json(state.db.get_token_breakdown(
+        days,
+        params.session_id,
+        params.agent.as_deref(),
+        params.provider.as_deref(),
+    ).unwrap_or(TokenBreakdown {
         total_tokens: 0,
         openab_tokens: 0,
         input_tokens: 0,

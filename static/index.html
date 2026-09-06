@@ -236,6 +236,29 @@
             transform: translateX(0);
         }
 
+        .token-breakdown-trigger {
+            position: relative;
+            outline: none;
+        }
+
+        .token-breakdown-trigger .token-breakdown-popover {
+            top: calc(100% + 0.5rem);
+            left: 0;
+            transform: translateY(-0.25rem);
+        }
+
+        .token-breakdown-trigger.align-right .token-breakdown-popover {
+            right: 0;
+            left: auto;
+        }
+
+        .token-breakdown-trigger:hover .token-breakdown-popover,
+        .token-breakdown-trigger:focus .token-breakdown-popover {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
         .token-breakdown-title {
             margin-bottom: 0.625rem;
             font-size: 0.75rem;
@@ -279,6 +302,11 @@
             .token-stat-card:hover .token-breakdown-popover,
             .token-stat-card:focus .token-breakdown-popover {
                 transform: translateY(0);
+            }
+
+            .token-breakdown-trigger.align-right .token-breakdown-popover {
+                right: auto;
+                left: 0;
             }
         }
 
@@ -865,6 +893,11 @@
                 const rankDisplay = idx < 3 ? rankEmojis[idx] : `#${entry.rank}`;
                 const tokensDisplay = formatTokens(entry.tokens);
                 const valueDisplay = tokensDisplay + ' tokens';
+                const breakdownUrl = tokenBreakdownUrl({
+                    days: leaderboardDays(data.period),
+                    agent: entry.agent,
+                    provider: entry.provider,
+                });
 
                 return `
                     <div class="leaderboard-item">
@@ -885,7 +918,10 @@
                                 <div class="progress-bar-fill" style="width: ${percent}%; background: ${color}"></div>
                             </div>
                             <div class="metric-detail flex gap-3">
-                                <span>📝 ${tokensDisplay} tokens</span>
+                                <div class="token-breakdown-trigger align-right" tabindex="0" aria-label="${entry.agent} token breakdown" data-token-breakdown-url="${breakdownUrl}">
+                                    <span>📝 ${tokensDisplay} tokens</span>
+                                    ${tokenBreakdownPopover()}
+                                </div>
                                 <span>🔧 ${entry.requests} reqs</span>
                             </div>
                         </div>
@@ -902,6 +938,66 @@
             if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'K';
             return tokens.toString();
         }
+
+        function leaderboardDays(period) {
+            if (period === 'today') return 1;
+            if (period === 'week') return 7;
+            return 30;
+        }
+
+        function tokenBreakdownUrl({ days, agent, provider }) {
+            const params = new URLSearchParams({ days: String(days) });
+            if (agent) params.set('agent', agent);
+            if (provider) params.set('provider', provider);
+            return `/api/token-breakdown?${params.toString()}`;
+        }
+
+        function tokenBreakdownPopover() {
+            return `
+                <div class="token-breakdown-popover" role="tooltip">
+                    <div class="token-breakdown-title">Token breakdown</div>
+                    <div class="token-breakdown-row"><span>OpenAB dispatch</span><strong data-token-field="openab_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Input tokens</span><strong data-token-field="input_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cached tokens</span><strong data-token-field="cached_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cache read</span><strong data-token-field="cache_read_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cache creation</span><strong data-token-field="cache_creation_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Output tokens</span><strong data-token-field="output_tokens">—</strong></div>
+                    <div class="token-breakdown-row total"><span>Total tokens</span><strong data-token-field="total_tokens">—</strong></div>
+                </div>
+            `;
+        }
+
+        function renderTokenBreakdownIn(trigger, breakdown) {
+            Object.entries(breakdown).forEach(([field, value]) => {
+                const element = trigger.querySelector(`[data-token-field="${field}"]`);
+                if (element) element.textContent = formatTokens(value || 0);
+            });
+        }
+
+        async function loadTokenBreakdownFor(trigger) {
+            if (trigger.dataset.tokenBreakdownLoaded || trigger.dataset.tokenBreakdownLoading) return;
+            trigger.dataset.tokenBreakdownLoading = 'true';
+            try {
+                const response = await fetch(trigger.dataset.tokenBreakdownUrl);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                renderTokenBreakdownIn(trigger, await response.json());
+                trigger.dataset.tokenBreakdownLoaded = 'true';
+            } catch (error) {
+                console.error('Failed to load token breakdown:', error);
+            } finally {
+                delete trigger.dataset.tokenBreakdownLoading;
+            }
+        }
+
+        document.addEventListener('mouseover', event => {
+            const trigger = event.target.closest('.token-breakdown-trigger');
+            if (trigger) loadTokenBreakdownFor(trigger);
+        });
+
+        document.addEventListener('focusin', event => {
+            const trigger = event.target.closest('.token-breakdown-trigger');
+            if (trigger) loadTokenBreakdownFor(trigger);
+        });
 
         // ===== Pod Status =====
         async function loadPodStatus() {
@@ -971,6 +1067,7 @@
                 const restarts = pod.restarts != null ? pod.restarts : '?';
                 const avgMs = pod.avg_response_ms || 0;
                 const avgSec = avgMs > 0 ? (avgMs / 1000).toFixed(1) + 's' : '—';
+                const breakdownUrl = tokenBreakdownUrl({ days: 1, agent: pod.name, provider: pod.provider });
 
                 // Format last active
                 let lastActive = '—';
@@ -994,7 +1091,10 @@
                             <span class="text-xs px-2 py-0.5 rounded" style="background: ${color}22; color: ${color}">${pod.provider}</span>
                         </div>
                         <div class="grid grid-cols-2 gap-1 text-xs" style="color: var(--text-secondary)">
-                            <span>📊 ${formatTokens(tokens)} tokens</span>
+                            <div class="token-breakdown-trigger" tabindex="0" aria-label="${pod.name} token breakdown" data-token-breakdown-url="${breakdownUrl}">
+                                <span>📊 ${formatTokens(tokens)} tokens</span>
+                                ${tokenBreakdownPopover()}
+                            </div>
                             <span>🔧 ${requests} reqs</span>
                             <span>⚡ avg ${avgSec}</span>
                             <span>🕐 ${lastActive}</span>

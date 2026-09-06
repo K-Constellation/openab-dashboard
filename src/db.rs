@@ -283,7 +283,13 @@ impl Database {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
-    pub fn get_token_breakdown(&self, days: Option<i64>, session_id: Option<i64>) -> Result<TokenBreakdown> {
+    pub fn get_token_breakdown(
+        &self,
+        days: Option<i64>,
+        session_id: Option<i64>,
+        agent: Option<&str>,
+        provider: Option<&str>,
+    ) -> Result<TokenBreakdown> {
         let conn = self.conn.lock().unwrap();
         let days_param = days.map(|days| format!("-{} days", days));
         conn.query_row(
@@ -300,8 +306,10 @@ impl Database {
              FROM usage_events ue
              LEFT JOIN recording_session_events se ON se.event_id = ue.id
              WHERE (?1 IS NULL OR se.session_id = ?1)
-               AND (?2 IS NULL OR ue.timestamp >= datetime('now', ?2))",
-            params![session_id, days_param],
+               AND (?2 IS NULL OR ue.timestamp >= datetime('now', ?2))
+               AND (?3 IS NULL OR ue.agent = ?3)
+               AND (?4 IS NULL OR ue.provider = ?4)",
+            params![session_id, days_param, agent, provider],
             |row| {
                 let cache_read_tokens: i64 = row.get(3)?;
                 let cache_creation_tokens: i64 = row.get(4)?;
@@ -930,7 +938,7 @@ mod tests {
         }));
         db.insert_usage_event(&devin, "devin:local").unwrap();
 
-        let breakdown = db.get_token_breakdown(Some(1), None).unwrap();
+        let breakdown = db.get_token_breakdown(Some(1), None, Some("orion"), None).unwrap();
         assert_eq!(breakdown.total_tokens, 194);
         assert_eq!(breakdown.openab_tokens, 50);
         assert_eq!(breakdown.input_tokens, 120);
@@ -938,6 +946,10 @@ mod tests {
         assert_eq!(breakdown.cache_read_tokens, 800);
         assert_eq!(breakdown.cache_creation_tokens, 20);
         assert_eq!(breakdown.output_tokens, 24);
+
+        let devin_only = db.get_token_breakdown(Some(1), None, Some("orion"), Some("devin")).unwrap();
+        assert_eq!(devin_only.total_tokens, 144);
+        assert_eq!(devin_only.openab_tokens, 0);
     }
 
     #[test]
