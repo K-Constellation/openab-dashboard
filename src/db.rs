@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 use std::sync::Mutex;
-use crate::models::{UsageRecord, QuotaSnapshot, DailySummary, RecordingSession, RecordingSessionStatus, RecordingInterval, RecordingSessionEvent, SessionPodSnapshot};
+use crate::models::{UsageRecord, QuotaSnapshot, DailySummary, RecordingSession, RecordingSessionStatus, RecordingInterval, RecordingSessionEvent, SessionPodSnapshot, TokenBreakdown};
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -281,6 +281,41 @@ impl Database {
         })?;
 
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_token_breakdown(&self, days: Option<i64>, session_id: Option<i64>) -> Result<TokenBreakdown> {
+        let conn = self.conn.lock().unwrap();
+        let days_param = days.map(|days| format!("-{} days", days));
+        conn.query_row(
+            "SELECT
+                COALESCE(SUM(ue.total_tokens), 0),
+                COALESCE(SUM(CASE
+                    WHEN json_extract(COALESCE(ue.metadata, '{}'), '$.source') = 'devin_session_db' THEN 0
+                    ELSE COALESCE(ue.total_tokens, 0)
+                END), 0),
+                COALESCE(SUM(ue.input_tokens), 0),
+                COALESCE(SUM(COALESCE(json_extract(ue.metadata, '$.cache_read_tokens'), 0)), 0),
+                COALESCE(SUM(COALESCE(json_extract(ue.metadata, '$.cache_creation_tokens'), 0)), 0),
+                COALESCE(SUM(ue.output_tokens), 0)
+             FROM usage_events ue
+             LEFT JOIN recording_session_events se ON se.event_id = ue.id
+             WHERE (?1 IS NULL OR se.session_id = ?1)
+               AND (?2 IS NULL OR ue.timestamp >= datetime('now', ?2))",
+            params![session_id, days_param],
+            |row| {
+                let cache_read_tokens: i64 = row.get(3)?;
+                let cache_creation_tokens: i64 = row.get(4)?;
+                Ok(TokenBreakdown {
+                    total_tokens: row.get(0)?,
+                    openab_tokens: row.get(1)?,
+                    input_tokens: row.get(2)?,
+                    cached_tokens: cache_read_tokens + cache_creation_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                    output_tokens: row.get(5)?,
+                })
+            },
+        ).map_err(Into::into)
     }
 
     pub fn get_daily_summary_for_session(&self, session_id: i64, days: i64) -> Result<Vec<DailySummary>> {
@@ -873,6 +908,36 @@ mod tests {
         let event_count: i64 = conn.query_row("SELECT COUNT(*) FROM usage_events", [], |row| row.get(0)).unwrap();
         assert_eq!(account_count, 1);
         assert_eq!(event_count, 1);
+    }
+
+    #[test]
+    fn token_breakdown_separates_openab_and_devin_metrics() {
+        let db = in_mem_db();
+        let mut openab = sample_event(Utc::now(), "orion");
+        openab.total_tokens = Some(50);
+        db.insert_usage_event(&openab, "kiro:user").unwrap();
+
+        let mut devin = sample_event(Utc::now() + chrono::Duration::seconds(1), "orion");
+        devin.provider = "devin".into();
+        devin.provider_event_id = Some("session-1:message-1".into());
+        devin.input_tokens = Some(120);
+        devin.output_tokens = Some(24);
+        devin.total_tokens = Some(144);
+        devin.metadata = Some(serde_json::json!({
+            "source": "devin_session_db",
+            "cache_read_tokens": 800,
+            "cache_creation_tokens": 20,
+        }));
+        db.insert_usage_event(&devin, "devin:local").unwrap();
+
+        let breakdown = db.get_token_breakdown(Some(1), None).unwrap();
+        assert_eq!(breakdown.total_tokens, 194);
+        assert_eq!(breakdown.openab_tokens, 50);
+        assert_eq!(breakdown.input_tokens, 120);
+        assert_eq!(breakdown.cached_tokens, 820);
+        assert_eq!(breakdown.cache_read_tokens, 800);
+        assert_eq!(breakdown.cache_creation_tokens, 20);
+        assert_eq!(breakdown.output_tokens, 24);
     }
 
     #[test]

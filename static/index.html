@@ -205,6 +205,83 @@
             margin-bottom: 0.5rem;
         }
 
+        .token-stat-card {
+            position: relative;
+            outline: none;
+        }
+
+        .token-breakdown-popover {
+            position: absolute;
+            z-index: 20;
+            top: 0;
+            left: calc(100% + 0.75rem);
+            width: 15rem;
+            padding: 0.875rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-card);
+            box-shadow: var(--shadow);
+            color: var(--text-primary);
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translateX(-0.25rem);
+            transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
+        }
+
+        .token-stat-card:hover .token-breakdown-popover,
+        .token-stat-card:focus .token-breakdown-popover {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(0);
+        }
+
+        .token-breakdown-title {
+            margin-bottom: 0.625rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .token-breakdown-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.25rem 0;
+            font-size: 0.75rem;
+        }
+
+        .token-breakdown-row span {
+            color: var(--text-secondary);
+        }
+
+        .token-breakdown-row strong {
+            color: var(--text-primary);
+            font-family: var(--font-display);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .token-breakdown-row.total {
+            margin-top: 0.375rem;
+            padding-top: 0.625rem;
+            border-top: 1px solid var(--border);
+        }
+
+        @media (max-width: 639px) {
+            .token-breakdown-popover {
+                top: calc(100% + 0.75rem);
+                left: 0;
+                transform: translateY(-0.25rem);
+            }
+
+            .token-stat-card:hover .token-breakdown-popover,
+            .token-stat-card:focus .token-breakdown-popover {
+                transform: translateY(0);
+            }
+        }
+
         .theme-select {
             background: var(--select-bg);
             border: 1px solid var(--select-border);
@@ -386,10 +463,20 @@
 
         <!-- Stat Cards -->
         <section id="stat-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <div class="card">
+            <div class="card token-stat-card" tabindex="0" aria-describedby="token-breakdown-popover">
                 <div class="stat-icon">📊</div>
                 <div class="stat-value" id="stat-total-tokens">—</div>
                 <div class="stat-label">Total Tokens (14d)</div>
+                <div id="token-breakdown-popover" class="token-breakdown-popover" role="tooltip">
+                    <div class="token-breakdown-title">Token breakdown</div>
+                    <div class="token-breakdown-row"><span>OpenAB dispatch</span><strong id="token-openab">—</strong></div>
+                    <div class="token-breakdown-row"><span>Input tokens</span><strong id="token-input">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cached tokens</span><strong id="token-cached">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cache read</span><strong id="token-cache-read">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cache creation</span><strong id="token-cache-creation">—</strong></div>
+                    <div class="token-breakdown-row"><span>Output tokens</span><strong id="token-output">—</strong></div>
+                    <div class="token-breakdown-row total"><span>Total tokens</span><strong id="token-total">—</strong></div>
+                </div>
             </div>
             <div class="card">
                 <div class="stat-icon">⚡</div>
@@ -705,6 +792,21 @@
             document.getElementById('stat-total-tokens').textContent = formatTokens(totalTokens);
             document.getElementById('stat-total-requests').textContent =
                 totalRequests >= 1000 ? (totalRequests / 1000).toFixed(1) + 'K' : totalRequests.toString();
+        }
+
+        function renderTokenBreakdown(breakdown) {
+            const values = {
+                'token-openab': breakdown.openab_tokens,
+                'token-input': breakdown.input_tokens,
+                'token-cached': breakdown.cached_tokens,
+                'token-cache-read': breakdown.cache_read_tokens,
+                'token-cache-creation': breakdown.cache_creation_tokens,
+                'token-output': breakdown.output_tokens,
+                'token-total': breakdown.total_tokens,
+            };
+            Object.entries(values).forEach(([id, value]) => {
+                document.getElementById(id).textContent = formatTokens(value || 0);
+            });
         }
 
         function renderTopAgent(lb) {
@@ -1408,10 +1510,13 @@
         window.loadStats = async function() {
             const s = window.openabSession.current;
             try {
-                const [leaderboardRes, summaryTodayRes, summaryTotalRes] = await Promise.all([
+                const summaryTotalUrl = s ? `/api/summary?session_id=${s.id}` : '/api/summary?days=14';
+                const breakdownUrl = s ? `/api/token-breakdown?session_id=${s.id}` : '/api/token-breakdown?days=14';
+                const [leaderboardRes, summaryTodayRes, summaryTotalRes, breakdownRes] = await Promise.all([
                     fetch('/api/leaderboard?period=month'),
                     fetch('/api/summary?days=1'),
-                    s ? fetch('/api/summary') : fetch('/api/summary?days=14'),
+                    fetch(summaryTotalUrl),
+                    fetch(breakdownUrl),
                 ]);
 
                 if (leaderboardRes.ok) {
@@ -1427,6 +1532,10 @@
                 if (summaryTotalRes.ok) {
                     const summary14 = await summaryTotalRes.json();
                     renderTotalTokens(summary14);
+                }
+
+                if (breakdownRes.ok) {
+                    renderTokenBreakdown(await breakdownRes.json());
                 }
             } catch (err) {
                 console.error('Failed to load stats:', err);

@@ -72,6 +72,17 @@ pub struct AgentDailyData {
 }
 
 #[derive(Debug, Serialize)]
+pub struct TokenBreakdown {
+    pub total_tokens: i64,
+    pub openab_tokens: i64,
+    pub input_tokens: i64,
+    pub cached_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub output_tokens: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub struct QuotaResponse {
     pub accounts: Vec<AccountQuota>,
 }

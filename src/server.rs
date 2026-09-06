@@ -20,6 +20,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/api/summary", get(api_summary))
+        .route("/api/token-breakdown", get(api_token_breakdown))
         .route("/api/quota", get(api_quota))
         .route("/api/leaderboard", get(api_leaderboard))
         .route("/api/health", get(api_health))
@@ -116,6 +117,32 @@ async fn api_summary(
         period: Period { start, end },
         daily,
     })
+}
+
+#[derive(Deserialize)]
+struct TokenBreakdownParams {
+    days: Option<i64>,
+    session_id: Option<i64>,
+}
+
+async fn api_token_breakdown(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<TokenBreakdownParams>,
+) -> Json<TokenBreakdown> {
+    let days = if params.session_id.is_some() {
+        None
+    } else {
+        Some(params.days.unwrap_or(14))
+    };
+    Json(state.db.get_token_breakdown(days, params.session_id).unwrap_or(TokenBreakdown {
+        total_tokens: 0,
+        openab_tokens: 0,
+        input_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        output_tokens: 0,
+    }))
 }
 
 async fn api_quota(State(state): State<Arc<AppState>>) -> Json<QuotaResponse> {
