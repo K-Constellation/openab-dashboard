@@ -97,7 +97,21 @@ async fn collect_provider(
 
     for pod in &provider_config.pods {
         if provider_name == "devin" {
-            let records = devin::collect_pod(kubectl, pod, provider_name).await?;
+            let records = match devin::collect_pod(kubectl, pod, provider_name).await {
+                Ok(records) => records,
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = state.db.log_collection(
+                        provider_name,
+                        Some(&pod.name),
+                        "error",
+                        Some(&message),
+                        0,
+                    );
+                    tracing::warn!(agent = %pod.name, "Devin session DB collection failed: {message}");
+                    continue;
+                }
+            };
             for record in records {
                 if state.db.insert_usage_event(&record, &pod.account_id)? > 0 {
                     total_count += 1;

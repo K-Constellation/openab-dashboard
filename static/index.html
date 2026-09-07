@@ -1310,9 +1310,13 @@
             if (typeof input === 'string' && input.startsWith('/api/')) {
                 const s = window.openabSession.current;
                 if (s) {
+                    // Pod health should remain live while a recording is active.
+                    // Archived sessions intentionally retain their frozen snapshots.
+                    const useLivePods = input.startsWith('/api/pods') && s.status !== 'archived';
                     const skip = input === '/api/recording-sessions' ||
                                  input.startsWith('/api/recording-sessions/') ||
                                  input === '/api/health' ||
+                                 useLivePods ||
                                  input.includes('session_id=');
                     if (!skip) {
                         const sep = input.includes('?') ? '&' : '?';
