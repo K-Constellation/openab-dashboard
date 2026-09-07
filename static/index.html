@@ -92,6 +92,13 @@
             --progress-bg: rgba(255, 255, 255, 0.1);
         }
 
+        [data-theme="glassmorphism"] .token-breakdown-popover {
+            background: rgba(22, 33, 62, 0.94);
+            border-color: rgba(255, 255, 255, 0.18);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+
         /* ===== Theme: Terminal Green ===== */
         [data-theme="terminal"] {
             --bg-primary: #000000;
@@ -210,6 +217,12 @@
             outline: none;
         }
 
+        /* backdrop-filter creates a stacking context in the Glassmorphism theme. */
+        .token-stat-card:hover,
+        .token-stat-card:focus-within {
+            z-index: 30;
+        }
+
         .token-breakdown-popover {
             position: absolute;
             z-index: 20;
@@ -239,6 +252,11 @@
         .token-breakdown-trigger {
             position: relative;
             outline: none;
+        }
+
+        .token-breakdown-trigger:hover,
+        .token-breakdown-trigger:focus {
+            z-index: 10;
         }
 
         .token-breakdown-trigger .token-breakdown-popover {
