@@ -193,6 +193,15 @@
             background: var(--bg-card-hover);
         }
 
+        /* A glass card creates a stacking context. Raise the entire section
+           while one of its token tooltips is open so later sections cannot
+           paint over the tooltip. */
+        section.card:has(.token-breakdown-trigger:hover),
+        section.card:has(.token-breakdown-trigger:focus-within) {
+            position: relative;
+            z-index: 40;
+        }
+
         .stat-value {
             font-family: var(--font-display);
             font-size: 2rem;
@@ -422,6 +431,11 @@
         .health-dot.unhealthy {
             background: #ef4444;
             box-shadow: 0 0 6px #ef4444;
+        }
+
+        .health-dot.unknown {
+            background: var(--text-secondary);
+            box-shadow: none;
         }
 
         @keyframes pulse-dot {
@@ -867,12 +881,11 @@
                 return;
             }
             let todayTokens = 0;
-            const today = summary.daily[summary.daily.length - 1];
-            if (today && today.agents) {
-                today.agents.forEach(a => {
+            summary.daily.forEach(day => {
+                (day.agents || []).forEach(a => {
                     todayTokens += (a.tokens || 0);
                 });
-            }
+            });
             document.getElementById('stat-today-usage').textContent = formatTokens(todayTokens);
         }
 
@@ -970,6 +983,10 @@
             return `/api/token-breakdown?${params.toString()}`;
         }
 
+        function agentProviderKey(agent, provider) {
+            return `${provider}\u0000${agent}`;
+        }
+
         function tokenBreakdownPopover() {
             return `
                 <div class="token-breakdown-popover" role="tooltip">
@@ -1048,24 +1065,17 @@
                     'Last collected: ' + healthData.last_collection;
             }
 
-            // Get today's tokens per agent
+            // The API's one-day range is a rolling 24-hour window. Aggregate
+            // every date returned so an agent does not disappear at midnight.
             const agentTokens = {};
             const agentRequests = {};
             if (summaryData && summaryData.daily) {
-                const today = summaryData.daily[summaryData.daily.length - 1];
-                if (today && today.agents) {
-                    today.agents.forEach(a => {
-                        agentTokens[a.agent] = (agentTokens[a.agent] || 0) + (a.tokens || 0);
-                        agentRequests[a.agent] = (agentRequests[a.agent] || 0) + (a.requests || 0);
+                summaryData.daily.forEach(day => {
+                    (day.agents || []).forEach(a => {
+                        const key = agentProviderKey(a.agent, a.provider);
+                        agentTokens[key] = (agentTokens[key] || 0) + (a.tokens || 0);
+                        agentRequests[key] = (agentRequests[key] || 0) + (a.requests || 0);
                     });
-                }
-            }
-
-            // Get provider health
-            const providerStatus = {};
-            if (healthData.providers) {
-                Object.entries(healthData.providers).forEach(([name, info]) => {
-                    providerStatus[name] = info.status;
                 });
             }
 
@@ -1075,10 +1085,14 @@
             }
 
             const html = podsData.pods.map((pod, idx) => {
-                const status = pod.status === 'enabled' ? (providerStatus[pod.provider] || 'unknown') : 'disabled';
-                const dotClass = status === 'success' ? 'healthy' : 'unhealthy';
-                const tokens = agentTokens[pod.name] || 0;
-                const requests = agentRequests[pod.name] || 0;
+                // Collection failures describe the collector, not Kubernetes pod health.
+                // The API reports live pod readiness separately; missing live data stays neutral.
+                const dotClass = pod.status === 'disabled'
+                    ? 'unknown'
+                    : (pod.health === 'healthy' ? 'healthy' : pod.health === 'unhealthy' ? 'unhealthy' : 'unknown');
+                const agentKey = agentProviderKey(pod.name, pod.provider);
+                const tokens = agentTokens[agentKey] || 0;
+                const requests = agentRequests[agentKey] || 0;
                 const color = colors[idx % colors.length];
                 const version = pod.version || '?';
                 const uptime = pod.uptime || '?';
