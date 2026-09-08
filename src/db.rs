@@ -144,6 +144,7 @@ impl Database {
              ON usage_events(provider, agent, provider_event_id)
              WHERE provider_event_id IS NOT NULL;"
         )?;
+        backfill_devin_total_tokens(&conn)?;
         Ok(())
     }
 
@@ -863,6 +864,19 @@ fn ensure_usage_event_column(conn: &Connection, column: &str, definition: &str) 
     Ok(())
 }
 
+fn backfill_devin_total_tokens(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "UPDATE usage_events
+         SET total_tokens = COALESCE(input_tokens, 0)
+                          + COALESCE(output_tokens, 0)
+                          + COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0)
+                          + COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)
+         WHERE json_extract(COALESCE(metadata, '{}'), '$.source') = 'devin_session_db'",
+        [],
+    )?;
+    Ok(())
+}
+
 fn parse_datetime(idx: usize, s: &str) -> rusqlite::Result<DateTime<Utc>> {
     s.parse().map_err(|e| rusqlite::Error::FromSqlConversionFailure(
         idx, rusqlite::types::Type::Text, Box::new(e),
@@ -930,7 +944,7 @@ mod tests {
         devin.provider_event_id = Some("session-1:message-1".into());
         devin.input_tokens = Some(120);
         devin.output_tokens = Some(24);
-        devin.total_tokens = Some(144);
+        devin.total_tokens = Some(964);
         devin.metadata = Some(serde_json::json!({
             "source": "devin_session_db",
             "cache_read_tokens": 800,
@@ -939,7 +953,7 @@ mod tests {
         db.insert_usage_event(&devin, "devin:local").unwrap();
 
         let breakdown = db.get_token_breakdown(Some(1), None, Some("orion"), None).unwrap();
-        assert_eq!(breakdown.total_tokens, 194);
+        assert_eq!(breakdown.total_tokens, 1014);
         assert_eq!(breakdown.openab_tokens, 50);
         assert_eq!(breakdown.input_tokens, 120);
         assert_eq!(breakdown.cached_tokens, 820);
@@ -948,8 +962,32 @@ mod tests {
         assert_eq!(breakdown.output_tokens, 24);
 
         let devin_only = db.get_token_breakdown(Some(1), None, Some("orion"), Some("devin")).unwrap();
-        assert_eq!(devin_only.total_tokens, 144);
+        assert_eq!(devin_only.total_tokens, 964);
         assert_eq!(devin_only.openab_tokens, 0);
+    }
+
+    #[test]
+    fn initialization_backfills_devin_cached_tokens() {
+        let db = in_mem_db();
+        let mut devin = sample_event(Utc::now(), "orion");
+        devin.provider = "devin".into();
+        devin.provider_event_id = Some("session-1:message-1".into());
+        devin.input_tokens = Some(120);
+        devin.output_tokens = Some(24);
+        devin.total_tokens = Some(144);
+        devin.metadata = Some(serde_json::json!({
+            "source": "devin_session_db",
+            "cache_read_tokens": 800,
+            "cache_creation_tokens": 20,
+        }));
+        db.insert_usage_event(&devin, "devin:local").unwrap();
+
+        db.initialize().unwrap();
+
+        let breakdown = db
+            .get_token_breakdown(Some(1), None, Some("orion"), Some("devin"))
+            .unwrap();
+        assert_eq!(breakdown.total_tokens, 964);
     }
 
     #[test]

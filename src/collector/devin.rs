@@ -250,10 +250,14 @@ fn parse_session_database(path: &Path, agent: &str, provider: &str) -> Result<Ve
                     .single()
                     .unwrap_or_else(Utc::now)
             });
+        let cached_tokens = message
+            .cache_read_tokens
+            .unwrap_or(0)
+            .saturating_add(message.cache_creation_tokens.unwrap_or(0));
         let total_tokens = message
             .input_tokens
             .zip(message.output_tokens)
-            .map(|(input, output)| input.saturating_add(output));
+            .map(|(input, output)| input.saturating_add(output).saturating_add(cached_tokens));
 
         Ok(UsageRecord {
             timestamp,
@@ -397,7 +401,7 @@ mod tests {
         assert_eq!(record.model.as_deref(), Some("gpt-5-6-terra-high"));
         assert_eq!(record.input_tokens, Some(120));
         assert_eq!(record.output_tokens, Some(24));
-        assert_eq!(record.total_tokens, Some(144));
+        assert_eq!(record.total_tokens, Some(964));
         assert_eq!(
             record.provider_event_id.as_deref(),
             Some("session-1:message-1")
