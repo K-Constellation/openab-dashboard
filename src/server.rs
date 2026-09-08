@@ -20,6 +20,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/api/summary", get(api_summary))
+        .route("/api/token-breakdown", get(api_token_breakdown))
         .route("/api/quota", get(api_quota))
         .route("/api/leaderboard", get(api_leaderboard))
         .route("/api/health", get(api_health))
@@ -118,6 +119,39 @@ async fn api_summary(
     })
 }
 
+#[derive(Deserialize)]
+struct TokenBreakdownParams {
+    days: Option<i64>,
+    session_id: Option<i64>,
+    agent: Option<String>,
+    provider: Option<String>,
+}
+
+async fn api_token_breakdown(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<TokenBreakdownParams>,
+) -> Json<TokenBreakdown> {
+    let days = if params.session_id.is_some() {
+        None
+    } else {
+        Some(params.days.unwrap_or(14))
+    };
+    Json(state.db.get_token_breakdown(
+        days,
+        params.session_id,
+        params.agent.as_deref(),
+        params.provider.as_deref(),
+    ).unwrap_or(TokenBreakdown {
+        total_tokens: 0,
+        openab_tokens: 0,
+        input_tokens: 0,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        output_tokens: 0,
+    }))
+}
+
 async fn api_quota(State(state): State<Arc<AppState>>) -> Json<QuotaResponse> {
     let db = &state.db;
     let quotas = db.get_latest_quota().unwrap_or_default();
@@ -180,17 +214,21 @@ async fn api_leaderboard(
         };
         let summaries = db.get_daily_summary(days).unwrap_or_default();
 
-        // Aggregate by agent
-        let mut agent_totals: std::collections::HashMap<String, (String, f64, i64, i64)> = std::collections::HashMap::new();
+        // An agent name can be used by more than one backend, so preserve the
+        // provider boundary in the leaderboard as well as in token breakdowns.
+        let mut agent_totals: std::collections::HashMap<(String, String), (f64, i64, i64)> =
+            std::collections::HashMap::new();
         for s in summaries {
-            let entry = agent_totals.entry(s.agent.clone()).or_insert((s.provider.clone(), 0.0, 0, 0));
-            entry.1 += s.total_credits;
-            entry.2 += s.total_tokens;
-            entry.3 += s.request_count;
+            let entry = agent_totals
+                .entry((s.agent.clone(), s.provider.clone()))
+                .or_insert((0.0, 0, 0));
+            entry.0 += s.total_credits;
+            entry.1 += s.total_tokens;
+            entry.2 += s.request_count;
         }
 
         agent_totals.into_iter()
-            .map(|(agent, (provider, credits, tokens, requests))| {
+            .map(|((agent, provider), (credits, tokens, requests))| {
                 let value = match metric.as_str() {
                     "credits" => if credits > 0.0 { Some(credits) } else { None },
                     "requests" => Some(requests as f64),
@@ -311,6 +349,11 @@ async fn api_pods(
                 "provider": provider_name,
                 "deployment": pod.deployment,
                 "status": if provider_config.enabled { "enabled" } else { "disabled" },
+                "health": match live {
+                    Some(live) if live.ready => "healthy",
+                    Some(_) => "unhealthy",
+                    None => "unknown",
+                },
                 "uptime": live.map(|l| l.age.clone()),
                 "restarts": live.map(|l| l.restarts),
                 "version": live.map(|l| l.version.clone()),
@@ -437,13 +480,19 @@ async fn delete_session(
 struct LivePodInfo {
     pod_name: String,
     age: String,
+    ready: bool,
     restarts: i32,
     version: String,
 }
 
 async fn get_live_pod_info(kubectl: &str) -> Vec<LivePodInfo> {
     let output = tokio::process::Command::new(kubectl)
-        .args(["get", "pods", "-o", "jsonpath={range .items[*]}{.metadata.name}|{.metadata.creationTimestamp}|{.status.containerStatuses[0].restartCount}|{.spec.containers[0].image}{\"\\n\"}{end}"])
+        .args([
+            "get",
+            "pods",
+            "-o",
+            "jsonpath={range .items[*]}{.metadata.name}|{.metadata.creationTimestamp}|{.status.phase}|{range .status.containerStatuses[*]}{.ready},{end}|{.status.containerStatuses[0].restartCount}|{.spec.containers[0].image}{\"\\n\"}{end}",
+        ])
         .output()
         .await;
 
@@ -452,11 +501,19 @@ async fn get_live_pod_info(kubectl: &str) -> Vec<LivePodInfo> {
 
     stdout.lines().filter_map(|line| {
         let parts: Vec<&str> = line.split('|').collect();
-        if parts.len() < 4 { return None; }
+        if parts.len() < 6 { return None; }
         let name = parts[0].to_string();
         let created = parts[1];
-        let restarts: i32 = parts[2].parse().unwrap_or(0);
-        let image = parts[3];
+        let phase = parts[2];
+        let ready_values = parts[3];
+        let restarts: i32 = parts[4].parse().unwrap_or(0);
+        let image = parts[5];
+        let ready = phase == "Running"
+            && ready_values
+                .split(',')
+                .filter(|value| !value.is_empty())
+                .all(|value| value == "true")
+            && ready_values.contains("true");
 
         // Calculate uptime
         let age = if let Ok(ts) = created.parse::<chrono::DateTime<chrono::Utc>>() {
@@ -475,7 +532,13 @@ async fn get_live_pod_info(kubectl: &str) -> Vec<LivePodInfo> {
         // Extract version from image tag
         let version = image.rsplit(':').next().unwrap_or("unknown").to_string();
 
-        Some(LivePodInfo { pod_name: name, age, restarts, version })
+        Some(LivePodInfo {
+            pod_name: name,
+            age,
+            ready,
+            restarts,
+            version,
+        })
     }).collect()
 }
 
@@ -494,7 +557,11 @@ mod tests {
         let config = Config {
             database: DatabaseConfig { path: ":memory:".into() },
             server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
-            collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+            collector: CollectorConfig {
+                interval_seconds: 300,
+                kubectl_path: "/bin/false".into(),
+                devin_session_db_mode: crate::config::DevinSessionDbMode::Auto,
+            },
             providers: ProvidersConfig { providers: std::collections::HashMap::new() },
         };
         let state = Arc::new(AppState { db, config });
@@ -539,7 +606,11 @@ mod tests {
             let config = Config {
                 database: DatabaseConfig { path: ":memory:".into() },
                 server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
-                collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+                collector: CollectorConfig {
+                    interval_seconds: 300,
+                    kubectl_path: "/bin/false".into(),
+                    devin_session_db_mode: crate::config::DevinSessionDbMode::Auto,
+                },
                 providers: ProvidersConfig { providers: std::collections::HashMap::new() },
             };
             let state = Arc::new(AppState { db, config });
@@ -694,7 +765,11 @@ mod tests {
             let config = Config {
                 database: DatabaseConfig { path: ":memory:".into() },
                 server: ServerConfig { host: "127.0.0.1".into(), port: 0 },
-                collector: CollectorConfig { interval_seconds: 300, kubectl_path: "/bin/false".into() },
+                collector: CollectorConfig {
+                    interval_seconds: 300,
+                    kubectl_path: "/bin/false".into(),
+                    devin_session_db_mode: crate::config::DevinSessionDbMode::Auto,
+                },
                 providers: ProvidersConfig { providers: std::collections::HashMap::new() },
             };
             let state = Arc::new(AppState { db, config });

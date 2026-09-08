@@ -28,6 +28,17 @@ pub struct CollectorConfig {
     pub interval_seconds: u64,
     #[serde(default = "default_kubectl")]
     pub kubectl_path: String,
+    #[serde(default)]
+    pub devin_session_db_mode: DevinSessionDbMode,
+}
+
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DevinSessionDbMode {
+    #[default]
+    Auto,
+    Local,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +61,12 @@ pub struct PodConfig {
     pub account_id: String,
     #[serde(default)]
     pub oauth_token_path: Option<String>,
+    /// Optional container name for pod-local collectors such as Devin.
+    #[serde(default)]
+    pub container: Option<String>,
+    /// Defaults to Devin CLI's standard state database location.
+    #[serde(default)]
+    pub devin_session_db_path: Option<String>,
 }
 
 fn default_host() -> String { "0.0.0.0".into() }

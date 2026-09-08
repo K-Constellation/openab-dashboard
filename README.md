@@ -176,6 +176,18 @@ providers:
 
 Just add a section under `providers:` in config.yaml. No code changes needed. The dashboard automatically collects `tokens_per_event` and `agent_dispatch_ms` from any pod's dispatch logs.
 
+### Devin ACP on a local cluster
+
+Use a `devin` provider to import model-reported per-message metrics from each
+pod's Devin CLI session database. With `devin_session_db_mode: auto`, the
+collector runs only when it recognises a local cluster such as OrbStack, Docker
+Desktop, minikube, kind, or k3d. It skips cloud and unknown clusters; cloud
+collection is intentionally not included yet.
+
+The first run imports historical sessions. Repeated runs use the Devin session
+and message IDs to avoid double-counting. `total_tokens` is input plus output;
+cache token counts are retained in event metadata.
+
 ## API Endpoints
 
 | Endpoint | Description |

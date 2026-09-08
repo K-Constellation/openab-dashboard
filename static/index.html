@@ -92,6 +92,13 @@
             --progress-bg: rgba(255, 255, 255, 0.1);
         }
 
+        [data-theme="glassmorphism"] .token-breakdown-popover {
+            background: rgba(22, 33, 62, 0.94);
+            border-color: rgba(255, 255, 255, 0.18);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+
         /* ===== Theme: Terminal Green ===== */
         [data-theme="terminal"] {
             --bg-primary: #000000;
@@ -186,6 +193,15 @@
             background: var(--bg-card-hover);
         }
 
+        /* A glass card creates a stacking context. Raise the entire section
+           while one of its token tooltips is open so later sections cannot
+           paint over the tooltip. */
+        section.card:has(.token-breakdown-trigger:hover),
+        section.card:has(.token-breakdown-trigger:focus-within) {
+            position: relative;
+            z-index: 40;
+        }
+
         .stat-value {
             font-family: var(--font-display);
             font-size: 2rem;
@@ -203,6 +219,122 @@
         .stat-icon {
             font-size: 1.5rem;
             margin-bottom: 0.5rem;
+        }
+
+        .token-stat-card {
+            position: relative;
+            outline: none;
+        }
+
+        /* backdrop-filter creates a stacking context in the Glassmorphism theme. */
+        .token-stat-card:hover,
+        .token-stat-card:focus-within {
+            z-index: 30;
+        }
+
+        .token-breakdown-popover {
+            position: absolute;
+            z-index: 20;
+            top: 0;
+            left: calc(100% + 0.75rem);
+            width: 15rem;
+            padding: 0.875rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-card);
+            box-shadow: var(--shadow);
+            color: var(--text-primary);
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translateX(-0.25rem);
+            transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
+        }
+
+        .token-stat-card:hover .token-breakdown-popover,
+        .token-stat-card:focus .token-breakdown-popover {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(0);
+        }
+
+        .token-breakdown-trigger {
+            position: relative;
+            outline: none;
+        }
+
+        .token-breakdown-trigger:hover,
+        .token-breakdown-trigger:focus {
+            z-index: 10;
+        }
+
+        .token-breakdown-trigger .token-breakdown-popover {
+            top: calc(100% + 0.5rem);
+            left: 0;
+            transform: translateY(-0.25rem);
+        }
+
+        .token-breakdown-trigger.align-right .token-breakdown-popover {
+            right: 0;
+            left: auto;
+        }
+
+        .token-breakdown-trigger:hover .token-breakdown-popover,
+        .token-breakdown-trigger:focus .token-breakdown-popover {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .token-breakdown-title {
+            margin-bottom: 0.625rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .token-breakdown-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.25rem 0;
+            font-size: 0.75rem;
+        }
+
+        .token-breakdown-row span {
+            color: var(--text-secondary);
+        }
+
+        .token-breakdown-row strong {
+            color: var(--text-primary);
+            font-family: var(--font-display);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .token-breakdown-row.total {
+            margin-top: 0.375rem;
+            padding-top: 0.625rem;
+            border-top: 1px solid var(--border);
+        }
+
+        @media (max-width: 639px) {
+            .token-breakdown-popover {
+                top: calc(100% + 0.75rem);
+                left: 0;
+                transform: translateY(-0.25rem);
+            }
+
+            .token-stat-card:hover .token-breakdown-popover,
+            .token-stat-card:focus .token-breakdown-popover {
+                transform: translateY(0);
+            }
+
+            .token-breakdown-trigger.align-right .token-breakdown-popover {
+                right: auto;
+                left: 0;
+            }
         }
 
         .theme-select {
@@ -301,6 +433,11 @@
             box-shadow: 0 0 6px #ef4444;
         }
 
+        .health-dot.unknown {
+            background: var(--text-secondary);
+            box-shadow: none;
+        }
+
         @keyframes pulse-dot {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
@@ -386,10 +523,20 @@
 
         <!-- Stat Cards -->
         <section id="stat-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <div class="card">
+            <div class="card token-stat-card" tabindex="0" aria-describedby="token-breakdown-popover">
                 <div class="stat-icon">📊</div>
                 <div class="stat-value" id="stat-total-tokens">—</div>
                 <div class="stat-label">Total Tokens (14d)</div>
+                <div id="token-breakdown-popover" class="token-breakdown-popover" role="tooltip">
+                    <div class="token-breakdown-title">Token breakdown</div>
+                    <div class="token-breakdown-row"><span>OpenAB dispatch</span><strong id="token-openab">—</strong></div>
+                    <div class="token-breakdown-row"><span>Input tokens</span><strong id="token-input">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cached tokens</span><strong id="token-cached">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cache read</span><strong id="token-cache-read">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cache creation</span><strong id="token-cache-creation">—</strong></div>
+                    <div class="token-breakdown-row"><span>Output tokens</span><strong id="token-output">—</strong></div>
+                    <div class="token-breakdown-row total"><span>Total tokens</span><strong id="token-total">—</strong></div>
+                </div>
             </div>
             <div class="card">
                 <div class="stat-icon">⚡</div>
@@ -707,6 +854,21 @@
                 totalRequests >= 1000 ? (totalRequests / 1000).toFixed(1) + 'K' : totalRequests.toString();
         }
 
+        function renderTokenBreakdown(breakdown) {
+            const values = {
+                'token-openab': breakdown.openab_tokens,
+                'token-input': breakdown.input_tokens,
+                'token-cached': breakdown.cached_tokens,
+                'token-cache-read': breakdown.cache_read_tokens,
+                'token-cache-creation': breakdown.cache_creation_tokens,
+                'token-output': breakdown.output_tokens,
+                'token-total': breakdown.total_tokens,
+            };
+            Object.entries(values).forEach(([id, value]) => {
+                document.getElementById(id).textContent = formatTokens(value || 0);
+            });
+        }
+
         function renderTopAgent(lb) {
             if (!lb.ranking || lb.ranking.length === 0) return;
             const top = lb.ranking[0];
@@ -719,12 +881,11 @@
                 return;
             }
             let todayTokens = 0;
-            const today = summary.daily[summary.daily.length - 1];
-            if (today && today.agents) {
-                today.agents.forEach(a => {
+            summary.daily.forEach(day => {
+                (day.agents || []).forEach(a => {
                     todayTokens += (a.tokens || 0);
                 });
-            }
+            });
             document.getElementById('stat-today-usage').textContent = formatTokens(todayTokens);
         }
 
@@ -763,6 +924,11 @@
                 const rankDisplay = idx < 3 ? rankEmojis[idx] : `#${entry.rank}`;
                 const tokensDisplay = formatTokens(entry.tokens);
                 const valueDisplay = tokensDisplay + ' tokens';
+                const breakdownUrl = tokenBreakdownUrl({
+                    days: leaderboardDays(data.period),
+                    agent: entry.agent,
+                    provider: entry.provider,
+                });
 
                 return `
                     <div class="leaderboard-item">
@@ -783,7 +949,10 @@
                                 <div class="progress-bar-fill" style="width: ${percent}%; background: ${color}"></div>
                             </div>
                             <div class="metric-detail flex gap-3">
-                                <span>📝 ${tokensDisplay} tokens</span>
+                                <div class="token-breakdown-trigger align-right" tabindex="0" aria-label="${entry.agent} token breakdown" data-token-breakdown-url="${breakdownUrl}">
+                                    <span>📝 ${tokensDisplay} tokens</span>
+                                    ${tokenBreakdownPopover()}
+                                </div>
                                 <span>🔧 ${entry.requests} reqs</span>
                             </div>
                         </div>
@@ -800,6 +969,70 @@
             if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'K';
             return tokens.toString();
         }
+
+        function leaderboardDays(period) {
+            if (period === 'today') return 1;
+            if (period === 'week') return 7;
+            return 30;
+        }
+
+        function tokenBreakdownUrl({ days, agent, provider }) {
+            const params = new URLSearchParams({ days: String(days) });
+            if (agent) params.set('agent', agent);
+            if (provider) params.set('provider', provider);
+            return `/api/token-breakdown?${params.toString()}`;
+        }
+
+        function agentProviderKey(agent, provider) {
+            return `${provider}\u0000${agent}`;
+        }
+
+        function tokenBreakdownPopover() {
+            return `
+                <div class="token-breakdown-popover" role="tooltip">
+                    <div class="token-breakdown-title">Token breakdown</div>
+                    <div class="token-breakdown-row"><span>OpenAB dispatch</span><strong data-token-field="openab_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Input tokens</span><strong data-token-field="input_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cached tokens</span><strong data-token-field="cached_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cache read</span><strong data-token-field="cache_read_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Cache creation</span><strong data-token-field="cache_creation_tokens">—</strong></div>
+                    <div class="token-breakdown-row"><span>Output tokens</span><strong data-token-field="output_tokens">—</strong></div>
+                    <div class="token-breakdown-row total"><span>Total tokens</span><strong data-token-field="total_tokens">—</strong></div>
+                </div>
+            `;
+        }
+
+        function renderTokenBreakdownIn(trigger, breakdown) {
+            Object.entries(breakdown).forEach(([field, value]) => {
+                const element = trigger.querySelector(`[data-token-field="${field}"]`);
+                if (element) element.textContent = formatTokens(value || 0);
+            });
+        }
+
+        async function loadTokenBreakdownFor(trigger) {
+            if (trigger.dataset.tokenBreakdownLoaded || trigger.dataset.tokenBreakdownLoading) return;
+            trigger.dataset.tokenBreakdownLoading = 'true';
+            try {
+                const response = await fetch(trigger.dataset.tokenBreakdownUrl);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                renderTokenBreakdownIn(trigger, await response.json());
+                trigger.dataset.tokenBreakdownLoaded = 'true';
+            } catch (error) {
+                console.error('Failed to load token breakdown:', error);
+            } finally {
+                delete trigger.dataset.tokenBreakdownLoading;
+            }
+        }
+
+        document.addEventListener('mouseover', event => {
+            const trigger = event.target.closest('.token-breakdown-trigger');
+            if (trigger) loadTokenBreakdownFor(trigger);
+        });
+
+        document.addEventListener('focusin', event => {
+            const trigger = event.target.closest('.token-breakdown-trigger');
+            if (trigger) loadTokenBreakdownFor(trigger);
+        });
 
         // ===== Pod Status =====
         async function loadPodStatus() {
@@ -832,24 +1065,17 @@
                     'Last collected: ' + healthData.last_collection;
             }
 
-            // Get today's tokens per agent
+            // The API's one-day range is a rolling 24-hour window. Aggregate
+            // every date returned so an agent does not disappear at midnight.
             const agentTokens = {};
             const agentRequests = {};
             if (summaryData && summaryData.daily) {
-                const today = summaryData.daily[summaryData.daily.length - 1];
-                if (today && today.agents) {
-                    today.agents.forEach(a => {
-                        agentTokens[a.agent] = (agentTokens[a.agent] || 0) + (a.tokens || 0);
-                        agentRequests[a.agent] = (agentRequests[a.agent] || 0) + (a.requests || 0);
+                summaryData.daily.forEach(day => {
+                    (day.agents || []).forEach(a => {
+                        const key = agentProviderKey(a.agent, a.provider);
+                        agentTokens[key] = (agentTokens[key] || 0) + (a.tokens || 0);
+                        agentRequests[key] = (agentRequests[key] || 0) + (a.requests || 0);
                     });
-                }
-            }
-
-            // Get provider health
-            const providerStatus = {};
-            if (healthData.providers) {
-                Object.entries(healthData.providers).forEach(([name, info]) => {
-                    providerStatus[name] = info.status;
                 });
             }
 
@@ -859,16 +1085,21 @@
             }
 
             const html = podsData.pods.map((pod, idx) => {
-                const status = pod.status === 'enabled' ? (providerStatus[pod.provider] || 'unknown') : 'disabled';
-                const dotClass = status === 'success' ? 'healthy' : 'unhealthy';
-                const tokens = agentTokens[pod.name] || 0;
-                const requests = agentRequests[pod.name] || 0;
+                // Collection failures describe the collector, not Kubernetes pod health.
+                // The API reports live pod readiness separately; missing live data stays neutral.
+                const dotClass = pod.status === 'disabled'
+                    ? 'unknown'
+                    : (pod.health === 'healthy' ? 'healthy' : pod.health === 'unhealthy' ? 'unhealthy' : 'unknown');
+                const agentKey = agentProviderKey(pod.name, pod.provider);
+                const tokens = agentTokens[agentKey] || 0;
+                const requests = agentRequests[agentKey] || 0;
                 const color = colors[idx % colors.length];
                 const version = pod.version || '?';
                 const uptime = pod.uptime || '?';
                 const restarts = pod.restarts != null ? pod.restarts : '?';
                 const avgMs = pod.avg_response_ms || 0;
                 const avgSec = avgMs > 0 ? (avgMs / 1000).toFixed(1) + 's' : '—';
+                const breakdownUrl = tokenBreakdownUrl({ days: 1, agent: pod.name, provider: pod.provider });
 
                 // Format last active
                 let lastActive = '—';
@@ -892,7 +1123,10 @@
                             <span class="text-xs px-2 py-0.5 rounded" style="background: ${color}22; color: ${color}">${pod.provider}</span>
                         </div>
                         <div class="grid grid-cols-2 gap-1 text-xs" style="color: var(--text-secondary)">
-                            <span>📊 ${formatTokens(tokens)} tokens</span>
+                            <div class="token-breakdown-trigger" tabindex="0" aria-label="${pod.name} token breakdown" data-token-breakdown-url="${breakdownUrl}">
+                                <span>📊 ${formatTokens(tokens)} tokens</span>
+                                ${tokenBreakdownPopover()}
+                            </div>
                             <span>🔧 ${requests} reqs</span>
                             <span>⚡ avg ${avgSec}</span>
                             <span>🕐 ${lastActive}</span>
@@ -1076,9 +1310,13 @@
             if (typeof input === 'string' && input.startsWith('/api/')) {
                 const s = window.openabSession.current;
                 if (s) {
+                    // Pod health should remain live while a recording is active.
+                    // Archived sessions intentionally retain their frozen snapshots.
+                    const useLivePods = input.startsWith('/api/pods') && s.status !== 'archived';
                     const skip = input === '/api/recording-sessions' ||
                                  input.startsWith('/api/recording-sessions/') ||
                                  input === '/api/health' ||
+                                 useLivePods ||
                                  input.includes('session_id=');
                     if (!skip) {
                         const sep = input.includes('?') ? '&' : '?';
@@ -1408,10 +1646,13 @@
         window.loadStats = async function() {
             const s = window.openabSession.current;
             try {
-                const [leaderboardRes, summaryTodayRes, summaryTotalRes] = await Promise.all([
+                const summaryTotalUrl = s ? `/api/summary?session_id=${s.id}` : '/api/summary?days=14';
+                const breakdownUrl = s ? `/api/token-breakdown?session_id=${s.id}` : '/api/token-breakdown?days=14';
+                const [leaderboardRes, summaryTodayRes, summaryTotalRes, breakdownRes] = await Promise.all([
                     fetch('/api/leaderboard?period=month'),
                     fetch('/api/summary?days=1'),
-                    s ? fetch('/api/summary') : fetch('/api/summary?days=14'),
+                    fetch(summaryTotalUrl),
+                    fetch(breakdownUrl),
                 ]);
 
                 if (leaderboardRes.ok) {
@@ -1427,6 +1668,10 @@
                 if (summaryTotalRes.ok) {
                     const summary14 = await summaryTotalRes.json();
                     renderTotalTokens(summary14);
+                }
+
+                if (breakdownRes.ok) {
+                    renderTokenBreakdown(await breakdownRes.json());
                 }
             } catch (err) {
                 console.error('Failed to load stats:', err);

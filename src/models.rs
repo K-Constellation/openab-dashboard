@@ -14,6 +14,8 @@ pub struct UsageRecord {
     pub duration_ms: Option<i64>,
     pub context_usage_pct: Option<f64>,
     pub session_id: Option<String>,
+    /// Provider-native stable identifier, when the provider exposes one.
+    pub provider_event_id: Option<String>,
     pub metadata: Option<serde_json::Value>,
 }
 
@@ -67,6 +69,17 @@ pub struct AgentDailyData {
     pub credits: Option<f64>,
     pub tokens: i64,
     pub requests: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TokenBreakdown {
+    pub total_tokens: i64,
+    pub openab_tokens: i64,
+    pub input_tokens: i64,
+    pub cached_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub output_tokens: i64,
 }
 
 #[derive(Debug, Serialize)]
